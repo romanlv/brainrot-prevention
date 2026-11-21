@@ -9,7 +9,8 @@ try() { if ! out=$("$@" 2>&1); then say "warn: '$*' failed: $(printf '%s' "$out"
 try adb shell settings delete secure enabled_accessibility_services
 try adb shell settings put secure accessibility_enabled 0
 try adb shell cmd notification disallow_listener "$LISTENER_SERVICE"
-try adb shell appops set "$PKG" GET_USAGE_STATS default
+# "default" falls back to the install-time (-g) PACKAGE_USAGE_STATS grant, which still allows access
+try adb shell appops set "$PKG" GET_USAGE_STATS ignore
 [ "$API" -ge 33 ] && try adb shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS
 [ "$API" -ge 29 ] && try adb shell pm revoke "$PKG" android.permission.ACCESS_BACKGROUND_LOCATION
 try adb shell pm revoke "$PKG" android.permission.ACCESS_FINE_LOCATION

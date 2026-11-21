@@ -19,5 +19,6 @@ internal object BuiltinDebugCommands {
             }
         }
         DataDebugCommands.registerAll()
+        PlatformDebugCommands.registerAll()
     }
 }

@@ -46,6 +46,11 @@ if [ "${SKIP_INSTALL:-0}" != 1 ]; then
   install_one "$APK_DRIVER" "$DRIVER"
 fi
 
+# A reinstall rebinds an already-enabled service before the collector starts; turn it off first so the
+# "connected" event of this grant lands after the mark.
+try adb shell settings delete secure enabled_accessibility_services
+sleep_s 1
+
 # [V2-N12]: the control receiver works before the service binds
 start_log
 step grant

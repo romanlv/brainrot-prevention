@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="brp_a11y_label">Brainrot Prevention blocker</string>
+    <string name="brp_a11y_description">Brainrot Prevention uses accessibility to see which app is on screen and, for supported browsers, the address shown in the address bar. It uses this only to block the apps and sites you chose, and to show its block screen. Nothing it reads leaves your device.</string>
+    <string name="brp_listener_label">Brainrot Prevention notification hiding</string>
+    <string name="brp_admin_label">Brainrot Prevention uninstall protection</string>
+</resources>

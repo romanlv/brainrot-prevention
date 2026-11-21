@@ -1,0 +1,3 @@
+[
+ {"package": "dev.brainrotprevention.fixture.browser", "urlBarIds": [{"id": "url_bar", "kind": "VIEW_ID", "source": "TEXT", "reliable": true}], "canEditUrl": true}
+]

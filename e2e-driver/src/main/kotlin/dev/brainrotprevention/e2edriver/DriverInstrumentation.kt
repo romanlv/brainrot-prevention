@@ -53,6 +53,8 @@ class DriverInstrumentation : Instrumentation() {
             val started = SystemClock.uptimeMillis()
             val obj: UiObject2 = device.wait(Until.findObject(sel), timeout)
                 ?: throw IllegalStateException("no object with res '$res' within $timeout ms")
+            // read before acting: a tap may remove the object's window (e.g. the block overlay's Close)
+            out.putString("found", obj.resourceName ?: "")
             when (cmd) {
                 "tap" -> {
                     obj.click()
@@ -62,7 +64,6 @@ class DriverInstrumentation : Instrumentation() {
                 "text" -> obj.text = args.getString("text") ?: ""
                 else -> throw IllegalArgumentException("unknown cmd '$cmd' (tap|wait|text)")
             }
-            out.putString("found", obj.resourceName ?: "")
             out.putLong("ms", SystemClock.uptimeMillis() - started)
             out.putString("result", "OK")
             Log.i(TAG, "$cmd $res OK")

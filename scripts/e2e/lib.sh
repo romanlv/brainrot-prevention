@@ -377,6 +377,11 @@ scenario_begin() {
   rm -f "$OUT/result.json" "$OUT/window.xml" "$OUT/fail.png"
   device_ok || fail_infra "emulator-5554 is not online"
   installed "$PKG" || fail_infra "$PKG is not installed (run scripts/e2e/grant.sh)"
+  # clean slate: no fixture left in front by the previous scenario (a launch is a *new* foreground item, §5.4)
+  go_home
+  adb shell am force-stop "$T" >/dev/null 2>&1 || true
+  adb shell am force-stop "$BROWSER" >/dev/null 2>&1 || true
+  adb shell am force-stop "$BROWSER2" >/dev/null 2>&1 || true
   start_log
   step setup
   ctl reset

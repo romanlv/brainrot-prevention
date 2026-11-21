@@ -1,0 +1,254 @@
+[
+ {
+  "package": "com.android.chrome",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.chrome.beta",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "org.chromium.chrome.browser",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.sec.android.app.sbrowser",
+  "urlBarIds": [
+   {
+    "id": "location_bar_edit_text",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "org.mozilla.firefox",
+  "urlBarIds": [
+   {
+    "id": "mozac_browser_toolbar_url_view",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "ADDRESSBAR_URL_BOX",
+    "kind": "COMPOSE_TAG",
+    "source": "CONTENT_DESC",
+    "reliable": true
+   },
+   {
+    "id": "url_bar_title",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": false
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "org.mozilla.firefox_beta",
+  "urlBarIds": [
+   {
+    "id": "mozac_browser_toolbar_url_view",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "ADDRESSBAR_URL_BOX",
+    "kind": "COMPOSE_TAG",
+    "source": "CONTENT_DESC",
+    "reliable": true
+   },
+   {
+    "id": "url_bar_title",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": false
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.microsoft.emmx",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.brave.browser",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.opera.browser",
+  "urlBarIds": [
+   {
+    "id": "url_field",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.opera.mini.native",
+  "urlBarIds": [
+   {
+    "id": "url_field",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.duckduckgo.mobile.android",
+  "urlBarIds": [
+   {
+    "id": "omnibarTextInput",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": false
+ },
+ {
+  "package": "com.vivaldi.browser",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   },
+   {
+    "id": "origin",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.kiwibrowser.browser",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.ecosia.android",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.huawei.browser",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ },
+ {
+  "package": "com.mi.globalbrowser.mini",
+  "urlBarIds": [
+   {
+    "id": "url_bar",
+    "kind": "VIEW_ID",
+    "source": "TEXT",
+    "reliable": true
+   }
+  ],
+  "canEditUrl": true
+ }
+]

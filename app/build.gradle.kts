@@ -84,5 +84,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.uiautomator)
     androidTestImplementation(libs.androidx.espresso.intents)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(project(":testing:fixtures"))
+    androidTestImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.junit)
 }

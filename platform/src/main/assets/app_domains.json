@@ -1,0 +1,69 @@
+{
+ "com.instagram.android": [
+  "instagram.com"
+ ],
+ "com.facebook.katana": [
+  "facebook.com"
+ ],
+ "com.facebook.lite": [
+  "facebook.com"
+ ],
+ "com.zhiliaoapp.musically": [
+  "tiktok.com"
+ ],
+ "com.ss.android.ugc.trill": [
+  "tiktok.com"
+ ],
+ "com.google.android.youtube": [
+  "youtube.com"
+ ],
+ "com.twitter.android": [
+  "x.com",
+  "twitter.com"
+ ],
+ "com.reddit.frontpage": [
+  "reddit.com"
+ ],
+ "com.snapchat.android": [
+  "snapchat.com"
+ ],
+ "com.pinterest": [
+  "pinterest.com"
+ ],
+ "tv.twitch.android.app": [
+  "twitch.tv"
+ ],
+ "com.linkedin.android": [
+  "linkedin.com"
+ ],
+ "com.tumblr": [
+  "tumblr.com"
+ ],
+ "com.netflix.mediaclient": [
+  "netflix.com"
+ ],
+ "com.amazon.avod.thirdpartyclient": [
+  "primevideo.com"
+ ],
+ "com.discord": [
+  "discord.com"
+ ],
+ "org.telegram.messenger": [
+  "web.telegram.org"
+ ],
+ "com.whatsapp": [
+  "web.whatsapp.com"
+ ],
+ "com.vkontakte.android": [
+  "vk.com"
+ ],
+ "com.threads.android": [
+  "threads.net"
+ ],
+ "com.bereal.ft": [
+  "bereal.com"
+ ],
+ "com.king.candycrushsaga": [
+  "king.com"
+ ]
+}

@@ -13,4 +13,7 @@ android {
 }
 dependencies {
     api(project(":core:engine"))
+    // G3 contract (scripts/e2e/TAGS.md): @Milestone, @NoGrant and MilestoneFilter for the androidTest APKs.
+    api(libs.junit)
+    implementation(libs.androidx.test.runner)
 }

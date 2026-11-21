@@ -355,6 +355,9 @@ gate_G3_once() {
     return 1
   fi
   instrument "$dir/instrument.txt" -e notAnnotation dev.brainrotprevention.testing.NoGrant
+  # am instrument force-stops the app; Android then marks the accessibility service as crashed and doesn't
+  # rebind it. Re-grant so G4 starts with the service connected.
+  SKIP_INSTALL=1 OUT="$VDIR/grant" "$ROOT/scripts/e2e/grant.sh" >"$dir/grant3.log" 2>&1 || true
   local s1 s2
   s1=$(instr_summary <"$dir/instrument-nogrant.txt")
   s2=$(instr_summary <"$dir/instrument.txt")

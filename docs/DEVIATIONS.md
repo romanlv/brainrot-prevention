@@ -33,6 +33,40 @@
 - **S14** rebinds the notification listener (`disallow_listener` then `allow_listener`) before asserting
   `service name=listener connected`, so that the event lands in the scenario's own log.
 
+## Platform (platform, app hooks) and test harness, M3–M8
+- **`am instrument` force-stops the app, and Android 17 then lists our accessibility service under "Crashed
+  services" and does not rebind it** (`dumpsys accessibility`: `Bound services:{}`, `Crashed services:{…}`).
+  The G3 tests rebind it by rewriting `enabled_accessibility_services` as the shell (`ServiceRebind`, with
+  UiAutomation obtained with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES` — otherwise UiAutomation itself suppresses
+  the service). `verify.sh` re-runs `grant.sh` (no install) after the G3 instrumentation so G4 starts connected,
+  and `grant.sh` deletes the setting before writing it, so a reinstall (which rebinds the service before the log
+  collector starts) still produces a `service connected` line after the `grant` mark.
+- **`ungrant.sh` sets `GET_USAGE_STATS` to `ignore`, not `default`:** the app is installed with `-g`, which grants
+  `PACKAGE_USAGE_STATS`, and with app-op mode `default` the system falls back to that permission, so usage access
+  stays granted.
+- **`scenario_begin` goes home and force-stops the three fixtures before `reset`.** Otherwise a fixture left in
+  front by the previous scenario (S5 ends with T on top) is already in the foreground set when S6 starts, so its
+  first launch is (correctly, §5.4) not a *new* launch and S6 counts one launch too few.
+- **e2e-driver reads the matched object's resource name before tapping.** Tapping `block_close` removes the
+  overlay window, and reading it afterwards threw `StaleObjectException`.
+- **`strict-start` accepts a TIMER shorter than 15 min** (S11 uses 10 min). The command checks every §9.2
+  precondition; the 15 min – 30 days range is the editor's TIMER range (§9.5). The debug path activates with the
+  minimum and then sets `endsAt`/`endsAtElapsed` to the requested duration. The UI path keeps the range.
+- **Alarm catch-up on every evaluation:** each evaluation first fires (`alarm_fired`, plus the PAUSE_END /
+  BEFORE_START notices) every policy instant that passed since the previous evaluation, in chronological order
+  (`NextInstants.all` from the last check). The same path serves the exact alarm, the in-process timer, the
+  300 ms poll and the clock commands, so a passed instant is reported exactly once whichever wakes the engine first.
+  The clock commands run tamper check → catch-up → evaluate → reschedule (reschedule after the evaluation, which
+  has the same effect as the §14.3 order).
+- **`alarm` is logged on every change of the scheduled alarm, including `next:null`** (nothing to schedule), and
+  always once per process start.
+- **`decision` BLOCK lines** are written when the result for a target changes and on every enforcement (after
+  the 1.5 s debounce), not on every 300 ms evaluation.
+- **`BlankPageProvider` is a `FileProvider`** over `files/blank/blank.html`, copied from the bundled asset when the
+  provider starts; the redirect URI is `content://<applicationId>.blank/blank/blank.html`.
+- **Status notification** is posted only while the accessibility service is connected (it is "posted by the
+  service", §3 rule 2) and cancelled on disconnect.
+
 ## Open
 
 - **`--full` extras not implemented yet:** the `brp28` AVD (API 28 image not installed) and its 300 s boot check,
@@ -67,3 +101,36 @@
   snapshot and counters, with platform-installed sensors or the engine host's last evaluation as an override), so UI and
   debug commands get the same refusal.
 - **`state.json`** is `{config: ConfigSnapshot, counters, strict, …}`; later milestones add keys via `StateContributors`.
+
+## UI (app `ui/**`)
+- **Platform seam:** the UI talks to the platform only through `ui/platform/Ports.kt` (Engine/Health/Apps/Strict ports);
+  `PlatformPorts.of(platform)` is the single adapter, tests pass fakes plus `LocalStrictPort` (StrictPolicy + core:data).
+  The "current location" button reads `LocationManager.getLastKnownLocation` in that adapter (TODO: no platform entry point
+  yet). The Wi-Fi suggestion is `Sensors.state().ssid`.
+- **Displayed status** (state pills, "Blocking now", Strict ACTIVE/STANDBY, `locked_by_strict` unlock text) is
+  `Engine.status(snapshot, clock, counters, sensors)` recomputed every second in the UI (one shared upstream), the same
+  computation as `StrictGate`, rather than `EngineHost.status` — so it also works while the service is off.
+- **Allowlist and budgets (§5.4 "the editor refuses them"):** switching a schedule with a budget to "Allow only selected"
+  asks first; confirming removes the budget (and `strictFollowed`, §6.3), cancelling keeps BLOCKLIST. The Budget section is
+  hidden in allowlist mode, so an allowlist schedule can't get a limit from the UI; the repository still rejects one.
+- **Empty blocklist:** saving a BLOCKLIST schedule with no apps and no sites is refused by the editor ("add at least one app
+  or site"); the spec doesn't forbid it, but it would block nothing.
+- **Quick Block timer chips** are No timer, 25 min, 1 h, 2 h, Custom (the spec lists the last four; "no timer" maps to
+  `until = null`, which §5.5 allows).
+- **Pause sheet:** the "used recently" presets skip 15 min and 1 h (already fixed options). Custom pause and custom Quick
+  Block durations are 1 min – 24 h; "until a date and time" takes any future instant. Times are shown in 24-hour format.
+- **Strict tab, Schedules method:** "Follow all schedules" is on by default; with it off, the per-schedule switches write
+  `strictFollowed` immediately (allowed while INACTIVE). Timer presets are 15 min, 1 h, 4 h, 1 day, 7 days plus a stepper
+  (15 min steps below a day, 6 h steps above, 15 min – 30 days).
+- **Device admin** has no Fix row in Settings or onboarding: it is only added by Strict activation (§9.2) and removed by the
+  platform after unlock.
+- **Runtime permissions** (notifications, location) are requested once from the row's button; afterwards the button opens
+  the platform's fix screen (App info), because Android stops showing the prompt after a second denial.
+- **testTagsAsResourceId** is set on debug and qa builds (`BUILD_TYPE != "release"`) on the activity root and on every
+  dialog, dropdown menu and bottom sheet (each is its own window), so the e2e driver sees `menu_pause`, `pause_option_15m`
+  and `locked_by_strict`.
+- **G3 helpers** (`@Milestone`, `@NoGrant`, `MilestoneFilter`) live in `testing/fixtures` (main source set, consumed as an
+  `androidTestImplementation`). Tests without `@Milestone` are dropped when a milestone filter is given. UI tests are tagged
+  M4 (editor, pause, allowlist), M8 (Strict) and M9 (onboarding, SAF backup); `OnboardingNoGrantTest` is the `@NoGrant` class.
+- **UI text** is in Kotlin (English only in v1); `strings.xml` holds the app name.
+
