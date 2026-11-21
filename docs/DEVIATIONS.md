@@ -66,8 +66,20 @@
   provider starts; the redirect URI is `content://<applicationId>.blank/blank/blank.html`.
 - **Status notification** is posted only while the accessibility service is connected (it is "posted by the
   service", §3 rule 2) and cancelled on disconnect.
+- **The debug `import` command marks onboarding done** after a successful import (a seeded device counts as set
+  up), so `reset` + seed opens Home rather than onboarding in S7 and S11. The backup format itself still carries
+  no onboarding state.
+- **S7 and S11 launch Home with `-f 0x10008000` (NEW_TASK|CLEAR_TASK).** Our app can't be force-stopped between
+  repeats (that unbinds the accessibility service), so a plain `am start` resumed the previous repeat's activity
+  with the "Locked by Strict Mode" dialog still open over the card menu.
 
 ## Open
+
+- **`pm archive` under an active device admin (§9.3) is not settled:** on the emulator `pm archive
+  dev.brainrotprevention.debug` fails with `NameNotFoundException: No installer found` (the app was installed with
+  `adb install`, so there is no installer to archive it), before any device-policy check. Archive UI is therefore not
+  added to the installer guard.
+- **Re-alert of re-posted snoozed notifications (§10.4)** is not verified; `notif_realert` is not logged.
 
 - **`--full` extras not implemented yet:** the `brp28` AVD (API 28 image not installed) and its 300 s boot check,
   S12b (real `date` jump as root), S17 (`adb emu geo fix`), and the `dumpsys cpuinfo` accessibility-load

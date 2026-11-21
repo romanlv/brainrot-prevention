@@ -213,6 +213,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         g.notifier.cancelStatus()
         Brp.event("service", "name" to "a11y", "state" to "disconnected")
         g.engineHost.requestEvaluate("service-disconnected")
+        runCatching { g.health.refresh() }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

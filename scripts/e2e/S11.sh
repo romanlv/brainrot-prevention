@@ -20,7 +20,7 @@ ctl strict-start --es method TIMER --el ms 600000 --ei options 7
 assert_event '.ev=="strict" and .state=="ACTIVE"' 3
 
 step delete-refused
-launch "$MAIN_ACTIVITY"
+launch "$MAIN_ACTIVITY" -f 0x10008000 # NEW_TASK|CLEAR_TASK: a fresh Home, no dialog left from a previous run
 driver_tap "schedule_menu_$NAME"
 driver_tap menu_delete
 driver_wait locked_by_strict 5000

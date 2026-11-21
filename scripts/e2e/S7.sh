@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib.sh"
 scenario_begin
 NAME=Allday
 step pause
-launch "$MAIN_ACTIVITY"
+launch "$MAIN_ACTIVITY" -f 0x10008000 # NEW_TASK|CLEAR_TASK: a fresh Home, no dialog left from a previous run
 driver_tap "schedule_menu_$NAME"
 driver_tap menu_pause
 driver_tap pause_option_15m

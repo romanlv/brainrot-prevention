@@ -69,7 +69,31 @@ class PermissionHealth internal constructor(private val app: Context, private va
     val listenerComponent: ComponentName get() = ComponentName(app, NotificationBlockerService::class.java)
     val adminComponent: ComponentName get() = ComponentName(app, StrictAdminReceiver::class.java)
 
-    fun refresh(): HealthReport = check().also { _report.value = it }
+    @Volatile private var offPosted = false
+
+    /** Health check (§11.6: app open, service connect, every 6 h). Posts "Blocking is off" once per outage. */
+    fun refresh(): HealthReport {
+        val r = check()
+        _report.value = r
+        val anyEnabled = g.data.snapshots.snapshot.value?.schedules?.any { it.enabled } == true
+        val off = !accessibilityEnabled()
+        if (off && anyEnabled) {
+            if (!offPosted) {
+                offPosted = true
+                g.notifier.postHealth(
+                    "Blocking is off",
+                    if (settingsLockedByStrict()) {
+                        "Turn the accessibility service back on when Strict Mode ends."
+                    } else {
+                        "Turn the Brainrot Prevention accessibility service back on."
+                    },
+                )
+            }
+        } else {
+            offPosted = false
+        }
+        return r
+    }
 
     fun check(): HealthReport {
         val snapshot = g.data.snapshots.snapshot.value

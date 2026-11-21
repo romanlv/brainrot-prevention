@@ -63,7 +63,11 @@ internal object DataDebugCommands {
                 else -> return@register Result.fail("import needs --es b64 <base64> or --es path files/debug/<f>")
             }
             when (val r = dataGraph.backup.import(text)) {
-                is WriteResult.Ok -> Result.ok("imported ${r.value.schedules} schedules, quick block ${r.value.quickBlockApps} apps")
+                is WriteResult.Ok -> {
+                    // A seeded device counts as set up: Home, not onboarding, opens (scenarios S7, S11).
+                    dataGraph.settings.setOnboardingDone(true)
+                    Result.ok("imported ${r.value.schedules} schedules, quick block ${r.value.quickBlockApps} apps")
+                }
                 else -> Result.fail("import refused: ${r.describe()}")
             }
         }

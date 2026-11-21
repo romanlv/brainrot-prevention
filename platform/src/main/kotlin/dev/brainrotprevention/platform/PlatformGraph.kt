@@ -8,6 +8,12 @@ import dev.brainrotprevention.platform.sensors.Sensors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /** Implemented by the Application; gives every component the process-wide [PlatformGraph]. */
 interface PlatformHost {
@@ -51,6 +57,20 @@ class PlatformGraph private constructor(
     private fun start() {
         data.strictGate.sensors = { sensors.state() }
         engineHost.start()
+        scope.launch {
+            while (true) {
+                delay(6 * 3_600_000L)
+                runCatching { health.refresh() }
+            }
+        }
+        // Re-register geofences when the location rows change (§11.5).
+        scope.launch {
+            data.snapshots.snapshot.filterNotNull()
+                .map { s -> s.schedules.filter { it.enabled }.flatMap { it.locations }.map { listOf(it.id, it.lat, it.lon, it.radiusM) } }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { sensors.geofences.registerAll() }
+        }
     }
 
     /** Debug `reset` (after the data wipe): hide the overlay, forget engine memory, re-arm alarms, evaluate. */
