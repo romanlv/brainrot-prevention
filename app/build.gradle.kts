@@ -33,14 +33,25 @@ android {
         }
     }
     sourceSets {
-        getByName("debug") { java.directories += "src/hooks/kotlin"; kotlin.directories += "src/hooks/kotlin"; assets.directories += "src/hooks/assets" }
-        getByName("qa") { java.directories += "src/hooks/kotlin"; kotlin.directories += "src/hooks/kotlin"; assets.directories += "src/hooks/assets" }
+        getByName("debug") {
+            java.directories += "src/hooks/kotlin"
+            kotlin.directories += "src/hooks/kotlin"
+            assets.directories += "src/hooks/assets"
+        }
+        getByName("qa") {
+            java.directories += "src/hooks/kotlin"
+            kotlin.directories += "src/hooks/kotlin"
+            assets.directories += "src/hooks/assets"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     lint {
         baseline = file("lint-baseline.xml")
         error += listOf("MissingPermission", "ExportedReceiver", "UnspecifiedImmutableFlag")

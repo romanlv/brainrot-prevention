@@ -1,1 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="fx" /></manifest>
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="BRP e2e driver" android:allowBackup="false" />
+    <!-- Self-targeting instrumentation: runs in the driver's own process and only talks to
+         UiAutomation, so the app under test is never restarted by `am instrument`. -->
+    <instrumentation
+        android:name=".DriverInstrumentation"
+        android:targetPackage="dev.brainrotprevention.e2edriver"
+        android:label="BRP e2e driver" />
+</manifest>

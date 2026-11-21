@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "exportedAt": 0,
+  "schedules": [
+    {
+      "name": "Launches",
+      "icon": "⛔",
+      "sortOrder": 0,
+      "enabled": true,
+      "mode": "BLOCKLIST",
+      "combine": "ANY",
+      "allowlistWeb": "OPEN",
+      "blockNotifications": false,
+      "blockUnsupportedBrowsers": true,
+      "strictFollowed": false,
+      "timeWindows": [],
+      "limits": [
+        {
+          "kind": "LAUNCHES",
+          "period": "DAILY",
+          "allowance": 3
+        }
+      ],
+      "wifi": [],
+      "locations": [],
+      "apps": [
+        "dev.brainrotprevention.fixture.target"
+      ],
+      "webRules": []
+    }
+  ],
+  "quickBlock": {
+    "apps": [],
+    "webRules": [],
+    "blockNotifications": false
+  },
+  "excludedBrowsers": [],
+  "prefs": {
+    "dayStartHour": 0,
+    "limitWarningMin": 5,
+    "notifyBeforeStartMin": 0,
+    "notifyBeforePauseEndMin": 1,
+    "hidePauseOption": false
+  }
+}

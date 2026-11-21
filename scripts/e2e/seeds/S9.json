@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "exportedAt": 0,
+  "schedules": [
+    {
+      "name": "Focus",
+      "icon": "⛔",
+      "sortOrder": 0,
+      "enabled": true,
+      "mode": "ALLOWLIST",
+      "combine": "ANY",
+      "allowlistWeb": "ONLY_LISTED",
+      "blockNotifications": false,
+      "blockUnsupportedBrowsers": true,
+      "strictFollowed": false,
+      "timeWindows": [],
+      "limits": [],
+      "wifi": [],
+      "locations": [],
+      "apps": [
+        "dev.brainrotprevention.fixture.browser"
+      ],
+      "webRules": [
+        {
+          "kind": "DOMAIN",
+          "value": "wikipedia.org",
+          "anywhereInUrl": false
+        }
+      ]
+    }
+  ],
+  "quickBlock": {
+    "apps": [],
+    "webRules": [],
+    "blockNotifications": false
+  },
+  "excludedBrowsers": [],
+  "prefs": {
+    "dayStartHour": 0,
+    "limitWarningMin": 5,
+    "notifyBeforeStartMin": 0,
+    "notifyBeforePauseEndMin": 1,
+    "hidePauseOption": false
+  }
+}

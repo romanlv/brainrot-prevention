@@ -1,0 +1,139 @@
+{
+  "format": 1,
+  "exportedAt": 0,
+  "schedules": [
+    {
+      "name": "Everything",
+      "icon": "📵",
+      "sortOrder": 0,
+      "enabled": true,
+      "mode": "BLOCKLIST",
+      "combine": "ALL",
+      "allowlistWeb": "OPEN",
+      "blockNotifications": true,
+      "blockUnsupportedBrowsers": true,
+      "strictFollowed": true,
+      "timeWindows": [
+        {
+          "days": 31,
+          "startMin": 540,
+          "endMin": 1020
+        },
+        {
+          "days": 96,
+          "startMin": 1320,
+          "endMin": 360
+        }
+      ],
+      "limits": [
+        {
+          "kind": "TIME",
+          "period": "DAILY",
+          "allowance": 1800000
+        },
+        {
+          "kind": "LAUNCHES",
+          "period": "HOURLY",
+          "allowance": 5
+        }
+      ],
+      "wifi": [
+        "AndroidWifi",
+        "Office Net"
+      ],
+      "locations": [
+        {
+          "label": "Office",
+          "lat": 52.52,
+          "lon": 13.405,
+          "radiusM": 250,
+          "inverted": false
+        }
+      ],
+      "apps": [
+        "dev.brainrotprevention.fixture.target",
+        "com.example.notinstalled"
+      ],
+      "webRules": [
+        {
+          "kind": "DOMAIN",
+          "value": "example.com",
+          "anywhereInUrl": false
+        },
+        {
+          "kind": "KEYWORD",
+          "value": "game",
+          "anywhereInUrl": false
+        },
+        {
+          "kind": "KEYWORD",
+          "value": "games",
+          "anywhereInUrl": true
+        }
+      ]
+    },
+    {
+      "name": "Allow only",
+      "icon": "✅",
+      "sortOrder": 1,
+      "enabled": false,
+      "mode": "ALLOWLIST",
+      "combine": "ANY",
+      "allowlistWeb": "ONLY_LISTED",
+      "blockNotifications": false,
+      "blockUnsupportedBrowsers": false,
+      "strictFollowed": false,
+      "timeWindows": [
+        {
+          "days": 127,
+          "startMin": 0,
+          "endMin": 1440
+        }
+      ],
+      "limits": [],
+      "wifi": [],
+      "locations": [
+        {
+          "label": "Home",
+          "lat": 48.137,
+          "lon": 11.575,
+          "radiusM": 100,
+          "inverted": true
+        }
+      ],
+      "apps": [
+        "dev.brainrotprevention.fixture.browser"
+      ],
+      "webRules": [
+        {
+          "kind": "DOMAIN",
+          "value": "wikipedia.org",
+          "anywhereInUrl": false
+        }
+      ]
+    }
+  ],
+  "quickBlock": {
+    "apps": [
+      "dev.brainrotprevention.fixture.target"
+    ],
+    "webRules": [
+      {
+        "kind": "DOMAIN",
+        "value": "example.org",
+        "anywhereInUrl": false
+      }
+    ],
+    "blockNotifications": true
+  },
+  "excludedBrowsers": [
+    "dev.brainrotprevention.fixture.browser2"
+  ],
+  "prefs": {
+    "dayStartHour": 4,
+    "limitWarningMin": 2,
+    "notifyBeforeStartMin": 5,
+    "notifyBeforePauseEndMin": 2,
+    "hidePauseOption": false
+  }
+}

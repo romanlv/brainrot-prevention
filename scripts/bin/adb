@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# adb guard shim (SPEC §14.7). First on PATH via scripts/e2e/lib.sh.
+# - requires ANDROID_SERIAL=emulator-5554; rejects -d and -s <other>
+# - refuses kill-server, usb, tcpip, connect, reconnect, pair
+# - checks ro.kernel.qemu / ro.boot.qemu == 1 before every device command
+# - caps every call with a timeout (30 s; 300 s for install/boot; none for streaming logcat)
+# ALLOW_PHYSICAL=1 disables the checks (only when the user explicitly asks in the conversation).
+set -euo pipefail
+
+REAL="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}/platform-tools/adb"
+EMU_SERIAL=emulator-5554
+REFUSED=97
+
+refuse() { echo "adb-shim: REFUSED: $*" >&2; exit "$REFUSED"; }
+with_timeout() { perl -e 'alarm shift; exec @ARGV or die "exec failed: $!\n"' "$@"; }
+
+[ -x "$REAL" ] || refuse "real adb not found at $REAL"
+
+if [ "${ALLOW_PHYSICAL:-}" = 1 ]; then exec "$REAL" "$@"; fi
+
+[ "${ANDROID_SERIAL:-}" = "$EMU_SERIAL" ] || refuse "ANDROID_SERIAL must be $EMU_SERIAL (is '${ANDROID_SERIAL:-}')"
+
+# Parse global options up to the command word.
+args=("$@")
+i=0
+n=${#args[@]}
+while [ "$i" -lt "$n" ]; do
+  a=${args[$i]}
+  case "$a" in
+    -d) refuse "-d (USB device) is not allowed" ;;
+    -s) s=${args[$((i + 1))]:-}; [ "$s" = "$EMU_SERIAL" ] || refuse "-s $s is not the emulator"; i=$((i + 2)) ;;
+    -s*) s=${a#-s}; [ "$s" = "$EMU_SERIAL" ] || refuse "-s $s is not the emulator"; i=$((i + 1)) ;;
+    -t | -H | -P | -L) refuse "global option $a is not allowed" ;;
+    -e | -a) i=$((i + 1)) ;;
+    --) i=$((i + 1)); break ;;
+    -*) i=$((i + 1)) ;;
+    *) break ;;
+  esac
+done
+cmd=${args[$i]:-}
+rest=("${args[@]:$((i + 1))}")
+
+case "$cmd" in
+  kill-server | usb | tcpip | connect | reconnect | pair | disconnect | root-off) refuse "'$cmd' is not allowed" ;;
+esac
+
+cap=${ADB_TIMEOUT:-30}
+host_cmd=0
+case "$cmd" in
+  "" | help | version | devices | start-server | get-state | get-serialno | emu) host_cmd=1 ;;
+  install | install-multiple | uninstall | reboot | wait-for-* | root | unroot | push | pull | bugreport) cap=${ADB_TIMEOUT:-300} ;;
+  logcat)
+    # streaming logcat has no cap; one-shot forms (-d, -c, -G, -g) keep the default
+    stream=1
+    for r in ${rest[@]+"${rest[@]}"}; do case "$r" in -d | -c | -G | -g | -G*) stream=0 ;; esac; done
+    [ "$stream" = 1 ] && cap=0
+    ;;
+  shell | exec-out)
+    # interactive shell (no args) has no cap
+    [ ${#rest[@]} -eq 0 ] && cap=0
+    ;;
+esac
+
+if [ "$host_cmd" = 0 ]; then
+  q=$(with_timeout 10 "$REAL" -s "$EMU_SERIAL" shell 'echo "$(getprop ro.kernel.qemu)$(getprop ro.boot.qemu)"' </dev/null 2>/dev/null | tr -d '\r' || true)
+  case "$q" in *1*) ;; *) refuse "target $EMU_SERIAL is not reachable or not an emulator (qemu='$q')" ;; esac
+fi
+
+if [ "$cap" = 0 ]; then
+  exec "$REAL" -s "$EMU_SERIAL" "${args[@]:$i}"
+fi
+with_timeout "$cap" "$REAL" -s "$EMU_SERIAL" "${args[@]:$i}"
