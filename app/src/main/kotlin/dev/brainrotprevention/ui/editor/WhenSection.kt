@@ -67,6 +67,7 @@ import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.debugRoot
 import dev.brainrotprevention.ui.common.findActivity
 import dev.brainrotprevention.ui.format.Format
+import dev.brainrotprevention.ui.launchGuarded
 import dev.brainrotprevention.ui.platform.UiGrant
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -413,7 +414,7 @@ private fun WifiDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
 @Composable
 private fun LocationDialog(onDismiss: () -> Unit, onAdd: (LocationCondition) -> Unit) {
     val deps = LocalUiDeps.current
-    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
+    val scope = rememberCoroutineScope()
     var label by rememberSaveable { mutableStateOf("") }
     var lat by rememberSaveable { mutableStateOf("") }
     var lon by rememberSaveable { mutableStateOf("") }
@@ -443,7 +444,7 @@ private fun LocationDialog(onDismiss: () -> Unit, onAdd: (LocationCondition) -> 
                 )
                 AssistChip(
                     onClick = {
-                        scope.launch {
+                        scope.launchGuarded {
                             val here = runCatching { deps.platform.apps.currentLocation() }.getOrNull()
                             if (here == null) {
                                 info = "Current location isn't available. Enter coordinates instead."

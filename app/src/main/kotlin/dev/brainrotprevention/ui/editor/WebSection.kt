@@ -52,6 +52,7 @@ import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.debugRoot
 import dev.brainrotprevention.ui.common.readText
 import dev.brainrotprevention.ui.format.Format
+import dev.brainrotprevention.ui.launchGuarded
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,7 +77,7 @@ fun WebRulesEditor(
     var bulkOpen by rememberSaveable { mutableStateOf(false) }
     val preview = EditorOps.preview(kind, text, anywhere, verb)
     val context = LocalContext.current
-    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
+    val scope = rememberCoroutineScope()
 
     fun add(rule: WebRule) {
         if (EditorOps.atLimit(rules)) {
@@ -101,7 +102,7 @@ fun WebRulesEditor(
     fun bulk(input: String) {
         val before = rules
         parsing = true
-        scope.launch {
+        scope.launchGuarded {
             try {
                 val (_, r) = withContext(Dispatchers.Default) { EditorOps.bulk(before, input) }
                 // Merged into the list as it is now (it may have changed while parsing).
@@ -117,7 +118,7 @@ fun WebRulesEditor(
 
     val csv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            scope.launch {
+            scope.launchGuarded {
                 val content = readText(context, uri)
                 if (content == null) message = "Couldn't read that file (it must be text, at most 1 MB)." else bulk(content)
             }

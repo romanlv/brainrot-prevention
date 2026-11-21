@@ -112,13 +112,15 @@ fun EmergencyFlow(vm: StrictViewModel, step: EmergencyStep, st: StrictUi) {
             OnScreenWait(onStop = vm::cancelWait)
             LaunchedEffect(w) {
                 if (w == null) return@LaunchedEffect
-                while (true) {
-                    remaining = vm.remaining(w)
-                    if (remaining <= 0) {
-                        vm.finishWait()
-                        break
+                dev.brainrotprevention.ui.uiGuarded {
+                    while (true) {
+                        remaining = vm.remaining(w)
+                        if (remaining <= 0) {
+                            vm.finishWait()
+                            break
+                        }
+                        delay(250)
                     }
-                    delay(250)
                 }
             }
             AlertDialog(

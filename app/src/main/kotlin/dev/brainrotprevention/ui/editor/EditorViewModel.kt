@@ -15,6 +15,7 @@ import dev.brainrotprevention.ui.common.Notice
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.UiApp
+import dev.brainrotprevention.ui.retryReporting
 import dev.brainrotprevention.ui.safeScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,7 +73,11 @@ class EditorViewModel(
     private val _essentials = MutableStateFlow<List<UiApp>>(emptyList())
     val essentials: StateFlow<List<UiApp>> = _essentials.asStateFlow()
 
-    val counters: StateFlow<Map<Long, UsageCounter>> = g.counters.counters.stateIn(safeScope, SharingStarted.Eagerly, emptyMap())
+    val counters: StateFlow<Map<Long, UsageCounter>> = g.counters.counters.retryReporting().stateIn(
+        safeScope,
+        SharingStarted.Eagerly,
+        emptyMap()
+    )
 
     private val _notice = MutableStateFlow<Notice?>(null)
     val notice: StateFlow<Notice?> = _notice.asStateFlow()

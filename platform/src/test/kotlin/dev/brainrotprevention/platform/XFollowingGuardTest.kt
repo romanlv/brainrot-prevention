@@ -70,6 +70,27 @@ class XFollowingGuardTest {
     }
 
     @Test
+    fun timelinePostsAreNotSearched() {
+        // A post mentioning "For you" / "Following" (e.g. a follow button) must not count as the tab row.
+        val post =
+            N(
+                viewId = "timeline_post",
+                kids = listOf(N(selected = true, kids = listOf(N(desc = "For you"))), tab("Following", open = false))
+            )
+        val root = N(viewId = "MainLanding", kids = listOf(N(viewId = "scaffold_home_tabbed", kids = listOf(post))))
+        assertNull(findTapTarget(root, forYou, following))
+    }
+
+    @Test
+    fun theFirstTabLabelDecides() {
+        // Tab row with Following open: the search stops at the first label and doesn't look further.
+        val laterForYou = N(kids = listOf(tab("For you", open = true), tab("Following", open = false)))
+        val row = N(kids = listOf(tab("For you", open = false), tab("Following", open = true)))
+        val root = N(viewId = "scaffold_home_tabbed", kids = listOf(row, laterForYou))
+        assertNull(findTapTarget(root, forYou, following))
+    }
+
+    @Test
     fun nodeBudgetStopsTheSearch() {
         val root = screen("scaffold_home_tabbed", tab("For you", open = true), tab("Following", open = false))
         assertNull(findTapTarget(root, forYou, following, maxNodes = 3))

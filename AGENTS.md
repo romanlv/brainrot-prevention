@@ -1,6 +1,6 @@
 # Agent loop
 
-Copied from SPEC.md §15 (`../SPEC.md`). The spec is the source of truth. Event, tag and debug-command contracts for the scenarios are in `scripts/e2e/TAGS.md`.
+Adapted from §15 of the design spec (not included in this repository; `docs/DEVIATIONS.md` records where the code differs from it). Event, tag and debug-command contracts for the scenarios are in `scripts/e2e/TAGS.md`.
 
 1. **Start every session with `scripts/doctor.sh`.** If it isn't ok, fix the environment first. Never change app code because of an `infra` failure.
 2. **Work milestone by milestone (§16)** and record the current one in `scripts/milestone` (tracked; a missing file fails `verify.sh` and `run.sh`).

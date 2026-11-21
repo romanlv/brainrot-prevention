@@ -320,9 +320,10 @@ gate_G1() {
   rm -rf "$ROOT/core/engine/build/test-results/test" "$ROOT/core/model/build/test-results/test"
   unit_gate G1 60 "core/engine/build/test-results/test core/model/build/test-results/test" "${tasks[@]}"
 }
-gate_G2() {
-  rm -rf "$ROOT/core/data/build/test-results/testDebugUnitTest"
-  unit_gate G2 120 "core/data/build/test-results/testDebugUnitTest" :core:data:testDebugUnitTest
+gate_G2() { # data, platform and app JVM unit tests
+  local d=(core/data/build/test-results/testDebugUnitTest platform/build/test-results/testDebugUnitTest app/build/test-results/testDebugUnitTest)
+  for x in "${d[@]}"; do rm -rf "$ROOT/$x"; done
+  unit_gate G2 240 "${d[*]}" :core:data:testDebugUnitTest :platform:testDebugUnitTest :app:testDebugUnitTest
 }
 
 # ---- device preparation (shared by G3, G4, FULL) ---------------------------------------------

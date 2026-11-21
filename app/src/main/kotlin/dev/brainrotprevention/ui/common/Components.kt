@@ -219,7 +219,7 @@ fun AppIcon(pkg: String, label: String, size: Dp = 40.dp) {
     val apps = LocalUiDeps.current.platform.apps
     // PackageManager + bitmap work off the main thread (a picker can have hundreds of rows), cached by package.
     val bitmap = produceState(AppIconCache.peek(pkg), pkg) {
-        if (value == null) value = AppIconCache.load(pkg) { apps.icon(it) }
+        if (value == null) dev.brainrotprevention.ui.uiGuarded { value = AppIconCache.load(pkg) { apps.icon(it) } }
     }.value
     if (bitmap != null) {
         Image(bitmap, contentDescription = null, modifier = Modifier.size(size))

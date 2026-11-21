@@ -23,6 +23,7 @@ import dev.brainrotprevention.ui.platform.UiActivation
 import dev.brainrotprevention.ui.platform.UiApp
 import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiUnlock
+import dev.brainrotprevention.ui.retryReporting
 import dev.brainrotprevention.ui.safeScope
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -184,7 +185,7 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
                 it.scheduleId
             }
         )
-    }.stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), StrictUi())
+    }.retryReporting().stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), StrictUi())
 
     init {
         safeScope.launch { g.snapshots.current() }

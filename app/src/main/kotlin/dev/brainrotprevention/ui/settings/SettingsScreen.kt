@@ -56,6 +56,7 @@ import dev.brainrotprevention.ui.common.readText
 import dev.brainrotprevention.ui.common.writeText
 import dev.brainrotprevention.ui.depsViewModel
 import dev.brainrotprevention.ui.format.Format
+import dev.brainrotprevention.ui.launchGuarded
 import dev.brainrotprevention.ui.platform.FixResult
 import dev.brainrotprevention.ui.platform.UiGrant
 import kotlinx.coroutines.launch
@@ -72,14 +73,14 @@ fun SettingsScreen(deps: UiDeps, contentPadding: PaddingValues) {
     val xKeepFollowing by vm.xKeepFollowing.collectAsStateWithLifecycle()
     var howStrong by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
+    val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshHealth() }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch { vm.exported(writeText(context, uri, vm.exportText())) }
+        if (uri != null) scope.launchGuarded { vm.exported(writeText(context, uri, vm.exportText())) }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch { vm.picked(readText(context, uri)) }
+        if (uri != null) scope.launchGuarded { vm.picked(readText(context, uri)) }
     }
 
     Column(

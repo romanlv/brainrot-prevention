@@ -14,3 +14,6 @@ internal inline fun guarded(where: String, block: () -> Unit) {
         Brp.event("error", "where" to where, "type" to e.javaClass.name, "msg" to e.message?.take(200))
     }
 }
+
+/** [android.os.Handler.post] with the runnable run under [guarded]. */
+internal fun android.os.Handler.postGuarded(where: String, block: () -> Unit): Boolean = post { guarded(where) { block() } }

@@ -91,11 +91,13 @@ class BlockOverlay(
         root = frame
         if (Build.VERSION.SDK_INT >= 33) {
             frame.post {
-                val d = frame.findOnBackInvokedDispatcher()
-                if (d != null) {
-                    val cb = OnBackInvokedCallback { actions.close() }
-                    d.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, cb)
-                    backCallback = cb
+                dev.brainrotprevention.platform.guarded("overlay-back") {
+                    val d = frame.findOnBackInvokedDispatcher()
+                    if (d != null) {
+                        val cb = OnBackInvokedCallback { actions.close() }
+                        d.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, cb)
+                        backCallback = cb
+                    }
                 }
             }
         }

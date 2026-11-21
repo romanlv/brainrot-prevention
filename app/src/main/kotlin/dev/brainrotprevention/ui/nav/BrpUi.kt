@@ -44,13 +44,13 @@ import dev.brainrotprevention.ui.editor.EditorScreen
 import dev.brainrotprevention.ui.editor.QuickBlockEditorScreen
 import dev.brainrotprevention.ui.editor.Template
 import dev.brainrotprevention.ui.home.HomeScreen
+import dev.brainrotprevention.ui.launchGuarded
 import dev.brainrotprevention.ui.onboarding.OnboardingScreen
 import dev.brainrotprevention.ui.settings.SettingsScreen
 import dev.brainrotprevention.ui.strict.StrictScreen
 import dev.brainrotprevention.ui.theme.BrpTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object Routes {
@@ -107,7 +107,7 @@ fun BrpUi(deps: UiDeps, startRoute: String? = null) {
 private fun AppNav(deps: UiDeps, nav: NavHostController, start: String) {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
-    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
+    val scope = rememberCoroutineScope()
     Scaffold(
         bottomBar = {
             if (TABS.any { it.route == route }) {
@@ -167,7 +167,7 @@ private fun AppNav(deps: UiDeps, nav: NavHostController, start: String) {
             }
             composable(Routes.ONBOARDING) {
                 OnboardingScreen(deps) { template, openEditor ->
-                    scope.launch {
+                    scope.launchGuarded {
                         deps.graph.settings.setOnboardingDone(true)
                         // NavController must be driven from the main thread; the write may resume elsewhere
                         withContext(Dispatchers.Main.immediate) {

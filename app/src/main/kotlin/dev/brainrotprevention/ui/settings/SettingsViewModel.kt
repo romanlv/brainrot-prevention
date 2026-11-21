@@ -8,6 +8,7 @@ import dev.brainrotprevention.ui.common.Notice
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.platform.UiApp
 import dev.brainrotprevention.ui.platform.UiHealth
+import dev.brainrotprevention.ui.retryReporting
 import dev.brainrotprevention.ui.safeScope
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -37,14 +38,19 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
 
     /** The stored prefs, overlaid with edits still waiting for their (debounced) save. */
     val prefs: StateFlow<Prefs?> = combine(g.settings.prefs, local) { db, l -> l ?: db }
+        .retryReporting()
         .stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), null)
-    val excluded: StateFlow<Set<String>> = g.settings.excludedBrowsers.stateIn(
+    val excluded: StateFlow<Set<String>> = g.settings.excludedBrowsers.retryReporting().stateIn(
         safeScope,
         SharingStarted.WhileSubscribed(5_000),
         emptySet()
     )
 
-    val xKeepFollowing: StateFlow<Boolean> = g.settings.xKeepFollowing.stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), false)
+    val xKeepFollowing: StateFlow<Boolean> = g.settings.xKeepFollowing.retryReporting().stateIn(
+        safeScope,
+        SharingStarted.WhileSubscribed(5_000),
+        false
+    )
 
     fun setXKeepFollowing(on: Boolean) {
         safeScope.launch { g.settings.setXKeepFollowing(on) }
@@ -98,11 +104,14 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
             unsaved = null
             // Only the wait is cancellable: a save that has started always finishes.
             withContext(NonCancellable) {
-                val r = g.settings.savePrefs(wanted)
-                _notice.value = r.notice()
-                if (r.isOk) deps.platform.engine.requestEvaluate()
-                // Back to the stored value (also undoes a refused edit), unless a newer edit is waiting.
-                if (local.value === display) local.value = null
+                try {
+                    val r = g.settings.savePrefs(wanted)
+                    _notice.value = r.notice()
+                    if (r.isOk) deps.platform.engine.requestEvaluate()
+                } finally {
+                    // Back to the stored value (also undoes a refused or failed edit), unless a newer edit is waiting.
+                    if (local.value === display) local.value = null
+                }
             }
         }
     }

@@ -148,6 +148,11 @@
   `url_bar_missing` rule (now not reset on relaunch, 60 s grace). Detecting the WebAPK that owns Chrome's task (to block
   at once, or as the listed app) was not done: minting a WebAPK needs Play Services' WebAPK server, which the emulator
   image can't reach offline, so the task/component shape couldn't be verified.
+- **Unreadable shortcut keys on user builds (1.0.1):** Android S+ refuses non-debuggable apps some hidden
+  `Settings.Secure` keys (on a Pixel 9a, Android 17: at least `accessibility_qs_targets`). Strict Mode's "not bound to a
+  shortcut" pre-check treats an unreadable key as "not bound", so binding the service to that shortcut type is not
+  detected. Failing closed would make Strict Mode impossible to start on those phones. Mitigation: with "Block Settings"
+  on, the accessibility settings pages that assign shortcuts are unreachable while Strict Mode is active.
 - **Shortcut assigned while Strict Mode is ON without BLOCK_SETTINGS (adversarial 2, second part):** accepted by §17;
   no health notice is posted for it.
 - **External displays / desktop windows** (review round 1, platform minor 1): the foreground set uses `getWindows()` (default

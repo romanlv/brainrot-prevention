@@ -38,6 +38,7 @@ import dev.brainrotprevention.platform.NotificationBlockerService
 import dev.brainrotprevention.platform.PlatformGraph
 import dev.brainrotprevention.platform.guarded
 import dev.brainrotprevention.platform.log.Brp
+import dev.brainrotprevention.platform.postGuarded
 import dev.brainrotprevention.platform.time.SystemTimeAndroid
 import dev.brainrotprevention.platform.ui.BlockActions
 import dev.brainrotprevention.platform.ui.BlockModel
@@ -104,7 +105,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             enforceWeb(p, d, snapshot, r)
         }
         pauseMediaCallbacksCleanup()
-        main.post { housekeeping(primary, blockedPkgs) }
+        main.postGuarded("housekeeping") { housekeeping(primary, blockedPkgs) }
     }
 
     /**
@@ -122,7 +123,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         if (last != null && now - last < DEBOUNCE_MS) return
         lastPipRt[pkg] = now
         pauseMedia(pkg)
-        main.post { handlePip(pkg) }
+        main.postGuarded("pip") { handlePip(pkg) }
     }
 
     private fun note(pkg: String, now: Long) {
@@ -140,7 +141,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         pauseMedia(pkg)
         val settingsGuard = d.reasons.any { it.source == ReasonSource.StrictSettings }
         val model = model(pkg, label(pkg), icon(pkg), d, snapshot, r, web = false)
-        main.post {
+        main.postGuarded("enforcer") {
             if (settingsGuard) {
                 service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
                 main.postDelayed({ guarded("go-home") { goHome() } }, 400)
@@ -197,7 +198,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         g.scope.launch {
             val still = service.foreground.current().any { it.packageName == pkg && !it.secondary }
             val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-            main.post { guarded("stuck-mark") { markStuck(pkg, still, lockTask) } }
+            main.postGuarded("stuck-mark") { markStuck(pkg, still, lockTask) }
         }
     }
 
@@ -235,7 +236,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             service.urlReader.forget(pkg, wid)
             Brp.event("enforced", "how" to how, "target" to pkg, "url" to p.target.url)
             val worked = how != "BACK"
-            main.post { showOverlay(pkg, model, web = true, redirect = worked, reason = "web") }
+            main.postGuarded("web-overlay") { showOverlay(pkg, model, web = true, redirect = worked, reason = "web") }
         }
     }
 
@@ -340,7 +341,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         g.scope.launch {
             val fg = service.foreground.current()
             val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-            main.post { closeWith(fg, lockTask) }
+            main.postGuarded("close") { closeWith(fg, lockTask) }
         }
     }
 
@@ -375,13 +376,13 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         g.scope.launch {
             val r = g.data.schedules.pause(id, g.clock.now() + 15 * 60_000L)
             if (r is WriteResult.Ok) {
-                main.post {
+                main.postGuarded("enforcer") {
                     overlay.hide("pause")
                     overlayTarget = null
                 }
                 g.engineHost.requestEvaluate("pause")
             } else {
-                main.post { overlay.current?.let { overlay.update(it.copy(message = "Locked by Strict Mode")) } }
+                main.postGuarded("enforcer") { overlay.current?.let { overlay.update(it.copy(message = "Locked by Strict Mode")) } }
             }
         }
     }
@@ -391,20 +392,20 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         g.scope.launch {
             val r = g.data.settings.excludeFromBlockScreen(pkg)
             if (r is WriteResult.Ok) {
-                main.post {
+                main.postGuarded("enforcer") {
                     overlay.hide("allow-browser")
                     overlayTarget = null
                 }
                 g.engineHost.requestEvaluate("allow-browser")
             } else {
-                main.post { overlay.current?.let { overlay.update(it.copy(message = "Locked by Strict Mode")) } }
+                main.postGuarded("enforcer") { overlay.current?.let { overlay.update(it.copy(message = "Locked by Strict Mode")) } }
             }
         }
     }
 
     @Volatile private var overlayScheduleIdForPause: Long? = null
 
-    fun hideAll(reason: String) = main.post {
+    fun hideAll(reason: String) = main.postGuarded("hide-all") {
         overlay.hideAll(reason)
         overlayTarget = null
     }
@@ -412,7 +413,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     /** Service stop: hide everything and drop every media callback (they must not outlive this service). */
     fun release(reason: String) {
         hideAll(reason)
-        main.post {
+        main.postGuarded("enforcer") {
             for ((c, cb) in mediaCallbacks) runCatching { c.unregisterCallback(cb) }
             mediaCallbacks.clear()
         }
@@ -529,7 +530,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
                 c.transportControls.pause()
                 Brp.event("media", "pkg" to pkg, "action" to "pause")
             }
-            main.post { watchMedia(c, pkg) }
+            main.postGuarded("media-watch") { watchMedia(c, pkg) }
         }
     }
 
@@ -545,7 +546,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             }
 
             override fun onSessionDestroyed() {
-                main.post { mediaCallbacks.remove(c)?.let { runCatching { c.unregisterCallback(it) } } }
+                main.postGuarded("enforcer") { mediaCallbacks.remove(c)?.let { runCatching { c.unregisterCallback(it) } } }
             }
         }
         c.registerCallback(cb, main)
@@ -553,7 +554,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     }
 
     /** Drops the callbacks of packages that are no longer blocked anywhere (not only those in front). */
-    private fun pauseMediaCallbacksCleanup() = main.post {
+    private fun pauseMediaCallbacksCleanup() = main.postGuarded("media-cleanup") {
         val it = mediaCallbacks.entries.iterator()
         while (it.hasNext()) {
             val (c, cb) = it.next()

@@ -18,6 +18,7 @@ import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.FixResult
 import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiHealth
+import dev.brainrotprevention.ui.retryReporting
 import dev.brainrotprevention.ui.safeScope
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -130,6 +131,7 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
             .distinctUntilChanged()
             .flowOn(kotlinx.coroutines.Dispatchers.IO),
     ) { st, h -> st.copy(health = h) }
+        .retryReporting()
         .stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), HomeState())
 
     /** Opens the fix screen for the banner's missing grant ("Locked by Strict Mode" when the Settings guard is on). */

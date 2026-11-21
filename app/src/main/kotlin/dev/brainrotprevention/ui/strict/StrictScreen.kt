@@ -524,13 +524,15 @@ private fun WaitPanel(vm: StrictViewModel, w: Wait) {
     var remaining by remember(w) { mutableLongStateOf(vm.remaining(w)) }
     OnScreenWait(onStop = vm::cancelWait)
     LaunchedEffect(w) {
-        while (true) {
-            remaining = vm.remaining(w)
-            if (remaining <= 0) {
-                vm.finishWait()
-                break
+        dev.brainrotprevention.ui.uiGuarded {
+            while (true) {
+                remaining = vm.remaining(w)
+                if (remaining <= 0) {
+                    vm.finishWait()
+                    break
+                }
+                delay(250)
             }
-            delay(250)
         }
     }
     Column(

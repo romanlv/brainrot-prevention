@@ -157,7 +157,9 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
     // ---- runtime receivers (§11.1) -----------------------------------------------------------
 
     private val packageReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
+        override fun onReceive(context: Context, intent: Intent) = guarded("package-receiver") { onPackage(intent) }
+
+        private fun onPackage(intent: Intent) {
             val pkg = intent.data?.schemeSpecificPart
             Brp.event("package", "action" to intent.action, "pkg" to pkg)
             if (pkg == XFollowingGuard.X_PKG) xGuard.invalidateLabels()
