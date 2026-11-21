@@ -75,9 +75,9 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         g.service = this
         g.health.onServiceConnected(true)
         Brp.event("service", "name" to "a11y", "state" to "connected")
-        registerReceivers()
-        g.sensors.start()
-        g.alarms.invalidate()
+        guarded("register-receivers") { registerReceivers() }
+        guarded("sensors-start") { g.sensors.start() }
+        guarded("alarms-invalidate") { g.alarms.invalidate() }
         g.scope.launch {
             g.packages.refresh("service")
             g.health.refresh()
@@ -103,7 +103,9 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) = guarded("a11y-event") { onEvent(event) }
+
+    private fun onEvent(event: AccessibilityEvent?) {
         val e = event ?: return
         val pkg = e.packageName?.toString() ?: return
         if (pkg == packageName) return
@@ -159,7 +161,9 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
     }
 
     private val systemReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
+        override fun onReceive(context: Context, intent: Intent) = guarded("system-receiver") { onSystem(intent) }
+
+        private fun onSystem(intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     urlReader.clear()

@@ -9,7 +9,7 @@ The signed release APK is `app/build/outputs/apk/release/app-release.apk`. A cop
 `scripts/release.sh`.
 
 1. Copy the APK to the phone, or install it from the Mac with
-   `$ANDROID_HOME/platform-tools/adb -s <serial> install dist/brainrot-prevention-1.0.0.apk`.
+   `$ANDROID_HOME/platform-tools/adb -s <serial> install dist/brainrot-prevention-1.0.1.apk`.
    The repo's `scripts/bin/adb` guard refuses physical devices on purpose, so use the SDK adb directly for this step.
 2. Open the app. The setup checklist asks for four things:
    - **Accessibility service.** This one is required. Because the app is sideloaded, Android 13+ greys the toggle out
@@ -62,6 +62,10 @@ must be signed with the same key, or the phone will refuse them and you'd have t
   16 end-to-end scenarios).
 - The release build was also hand-checked on the emulator: onboarding, creating a schedule, blocking an app, and
   blocking a site in real Chrome.
-- Not yet tried on a physical phone.
+- 1.0.0 crashed on a real Pixel 9a when Strict Mode was started: it read a hidden setting that user builds refuse
+  (debuggable emulator images and debuggable apps are exempt, so the tests never saw it). Fixed in 1.0.1, and the
+  UI and service callbacks now log errors instead of taking the blocker down with them.
+- Device gates also run on `BRP_AVD=brp37u` (Google Play image, user build, 37.1, 16 KB pages), which matches real
+  phones more closely. Check the release APK by hand there too: the automated suites install debuggable builds.
 - Open items are listed in `docs/DEVIATIONS.md` under "Open": WebAPK detection, external displays, a location
   fallback without Play Services, and a few device-only checks.

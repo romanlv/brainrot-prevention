@@ -374,7 +374,7 @@ assert_top_is_launcher() {
 }
 
 # ---- emulator boot wait (shared by emu.sh and S13) -----------------------------------------
-qemu_alive() { pgrep -f -- '-avd brp37' >/dev/null 2>&1; }
+qemu_alive() { pgrep -f -- "-avd ${BRP_AVD:-brp37}( |$)" >/dev/null 2>&1; }
 # wait_boot <seconds>: returns 0 when booted; 1 if the qemu process died; 2 on timeout
 wait_boot() {
   local d=$((SECONDS + $1))

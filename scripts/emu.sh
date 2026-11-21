@@ -9,8 +9,17 @@ source "$(dirname "$0")/e2e/lib.sh"
 trap - ERR
 SCENARIO=emu
 
-AVD=brp37
-IMAGE="system-images;android-37.0;google_apis;arm64-v8a"
+# BRP_AVD=brp37u selects the Google Play (user build, 37.1, 16 KB pages) image, which matches real phones:
+# hidden-settings and other restrictions that debuggable google_apis images skip are enforced there.
+AVD=${BRP_AVD:-brp37}
+case "$AVD" in
+  brp37) DEFAULT_IMAGE="system-images;android-37.0;google_apis;arm64-v8a" ;;
+  brp37u) DEFAULT_IMAGE="system-images;android-37.1;google_apis_playstore_ps16k;arm64-v8a" ;;
+  *) DEFAULT_IMAGE="" ;;
+esac
+IMAGE=${BRP_IMAGE:-$DEFAULT_IMAGE}
+[ -n "$IMAGE" ] || { echo "emu.sh: INFRA: set BRP_IMAGE for AVD $AVD" >&2; exit 3; }
+IMAGE_DIR="$ANDROID_HOME/$(echo "$IMAGE" | tr ';' '/')"
 AVD_DIR="$HOME/.android/avd/$AVD.avd"
 META="$AVD_DIR/brp-snapshot.json"
 GPU=swiftshader_indirect
@@ -23,7 +32,7 @@ die_infra() { echo "emu.sh: INFRA: $*" >&2; exit 3; }
 info() { echo "emu.sh: $*" >&2; }
 
 emulator_rev() { sed -n 's/^Pkg.Revision=//p' "$ANDROID_HOME/emulator/source.properties" | tr -d '\r'; }
-image_rev() { sed -n 's/^Pkg.Revision=//p' "$ANDROID_HOME/system-images/android-37.0/google_apis/arm64-v8a/source.properties" | tr -d '\r'; }
+image_rev() { sed -n 's/^Pkg.Revision=//p' "$IMAGE_DIR/source.properties" | tr -d '\r'; }
 want_meta() { jq -cn --arg e "$(emulator_rev)" --arg i "$(image_rev)" --arg g "$GPU" '{emulator_rev:$e,image_rev:$i,gpu:$g}'; }
 
 # host-side device list (no device command is sent)
@@ -87,9 +96,9 @@ cmd_down() {
     sleep 1
   done
   info "emu kill did not stop it; sending SIGTERM to $AVD's qemu"
-  pkill -f -- "-avd $AVD" || true
+  pkill -f -- "-avd $AVD( |$)" || true
   sleep 3
-  pkill -9 -f -- "-avd $AVD" || true
+  pkill -9 -f -- "-avd $AVD( |$)" || true
 }
 
 configure_clean() {

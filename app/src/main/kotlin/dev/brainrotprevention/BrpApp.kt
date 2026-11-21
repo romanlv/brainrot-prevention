@@ -32,6 +32,7 @@ class BrpApp : Application(), PlatformHost {
 
     override fun onCreate() {
         super.onCreate()
+        dev.brainrotprevention.ui.UiGuard.install(this)
         val debug = BuildConfig.BUILD_TYPE != "release"
         val clock: PolicyClock = if (debug) {
             val store = DebugClockStore(this)

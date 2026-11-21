@@ -61,16 +61,35 @@ class StrictActivator internal constructor(private val app: Context, private val
             .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "While Strict Mode is on, Brainrot Prevention can't be uninstalled.")
     }
 
+    /**
+     * Whether our service is bound to an accessibility shortcut. Several of these keys are `@hide` without
+     * `@Readable`: on user builds (real phones) reading them throws SecurityException, while debuggable emulator
+     * images allow it. An unreadable key counts as "not bound"; it must never crash the process, because the
+     * accessibility service lives in the same process.
+     */
     fun inAccessibilityShortcut(): Boolean {
         val me = ComponentName(app, BlockerAccessibilityService::class.java)
         return SHORTCUT_KEYS.any { k ->
-            val v = Settings.Secure.getString(app.contentResolver, k) ?: return@any false
+            val v = readSecureOrNull(k) ?: return@any false
             v.split(':').any { s ->
                 val c = ComponentName.unflattenFromString(s.trim())
                 c != null && c.packageName == me.packageName && (c.className == me.className || c.shortClassName == me.shortClassName)
             }
         }
     }
+
+    private fun readSecureOrNull(key: String): String? =
+        try {
+            Settings.Secure.getString(app.contentResolver, key)
+        } catch (e: SecurityException) {
+            if (unreadableLogged.add(key)) Brp.event("setting_unreadable", "key" to key)
+            null
+        } catch (e: RuntimeException) {
+            if (unreadableLogged.add(key)) Brp.event("setting_unreadable", "key" to key, "error" to e.javaClass.simpleName)
+            null
+        }
+
+    private val unreadableLogged = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     suspend fun facts(): StrictFacts = StrictFacts(
         accessibilityConnected = g.service != null,

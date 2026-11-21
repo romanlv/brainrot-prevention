@@ -1,7 +1,6 @@
 package dev.brainrotprevention.ui.settings
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.data.WriteResult
 import dev.brainrotprevention.model.Prefs
 import dev.brainrotprevention.ui.UiDeps
@@ -9,6 +8,7 @@ import dev.brainrotprevention.ui.common.Notice
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.platform.UiApp
 import dev.brainrotprevention.ui.platform.UiHealth
+import dev.brainrotprevention.ui.safeScope
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Job
@@ -37,9 +37,9 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
 
     /** The stored prefs, overlaid with edits still waiting for their (debounced) save. */
     val prefs: StateFlow<Prefs?> = combine(g.settings.prefs, local) { db, l -> l ?: db }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), null)
     val excluded: StateFlow<Set<String>> = g.settings.excludedBrowsers.stateIn(
-        viewModelScope,
+        safeScope,
         SharingStarted.WhileSubscribed(5_000),
         emptySet()
     )
@@ -59,7 +59,7 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
 
     init {
         refreshHealth()
-        viewModelScope.launch { _unsupported.value = runCatching { deps.platform.apps.unsupportedBrowsers() }.getOrDefault(emptyList()) }
+        safeScope.launch { _unsupported.value = runCatching { deps.platform.apps.unsupportedBrowsers() }.getOrDefault(emptyList()) }
     }
 
     fun refreshHealth() {
@@ -87,7 +87,7 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
         local.value = display
         unsaved = wanted
         saveJob?.cancel()
-        saveJob = viewModelScope.launch {
+        saveJob = safeScope.launch {
             delay(SAVE_DEBOUNCE_MS)
             unsaved = null
             // Only the wait is cancellable: a save that has started always finishes.
@@ -111,7 +111,7 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
     }
 
     fun setExcluded(pkg: String, excluded: Boolean) {
-        viewModelScope.launch {
+        safeScope.launch {
             val cur = g.settings.getExcludedBrowsers()
             _notice.value = g.settings.setExcludedBrowsers(if (excluded) cur + pkg else cur - pkg).notice()
         }
@@ -150,7 +150,7 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
     fun confirmImport() {
         val text = _pendingImport.value ?: return
         _pendingImport.value = null
-        viewModelScope.launch {
+        safeScope.launch {
             val r = g.backup.import(text)
             _notice.value = when (r) {
                 is WriteResult.Ok -> Notice.Message(

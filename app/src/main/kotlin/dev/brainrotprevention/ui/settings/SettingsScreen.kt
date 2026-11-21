@@ -71,7 +71,7 @@ fun SettingsScreen(deps: UiDeps, contentPadding: PaddingValues) {
     val pendingImport by vm.pendingImport.collectAsStateWithLifecycle()
     var howStrong by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshHealth() }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->

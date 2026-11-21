@@ -413,7 +413,7 @@ private fun WifiDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
 @Composable
 private fun LocationDialog(onDismiss: () -> Unit, onAdd: (LocationCondition) -> Unit) {
     val deps = LocalUiDeps.current
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
     var label by rememberSaveable { mutableStateOf("") }
     var lat by rememberSaveable { mutableStateOf("") }
     var lon by rememberSaveable { mutableStateOf("") }

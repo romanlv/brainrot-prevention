@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.model.QuickBlock
 import dev.brainrotprevention.ui.UiDeps
 import dev.brainrotprevention.ui.common.ConfirmDialog
@@ -43,6 +42,7 @@ import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.depsViewModelWithState
 import dev.brainrotprevention.ui.platform.UiApp
+import dev.brainrotprevention.ui.safeScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,7 +70,7 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
     val saving: StateFlow<Boolean> = _saving.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        safeScope.launch {
             if (_draft.value == null) {
                 val q = deps.graph.quickBlock.get()
                 initial = q
@@ -78,8 +78,8 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
                 _draft.value = q
             }
         }
-        viewModelScope.launch { _draft.debounce(250).collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
-        viewModelScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
+        safeScope.launch { _draft.debounce(250).collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
+        safeScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
     }
 
     fun update(f: (QuickBlock) -> QuickBlock) = _draft.update { it?.let(f) }
@@ -122,7 +122,7 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
             }
         }
         _saving.value = true
-        viewModelScope.launch {
+        safeScope.launch {
             try {
                 val cur = deps.graph.quickBlock.get()
                 val r = deps.graph.quickBlock.save(

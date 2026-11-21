@@ -36,6 +36,7 @@ import dev.brainrotprevention.platform.BlockerAccessibilityService
 import dev.brainrotprevention.platform.Events
 import dev.brainrotprevention.platform.NotificationBlockerService
 import dev.brainrotprevention.platform.PlatformGraph
+import dev.brainrotprevention.platform.guarded
 import dev.brainrotprevention.platform.log.Brp
 import dev.brainrotprevention.platform.time.SystemTimeAndroid
 import dev.brainrotprevention.platform.ui.BlockActions
@@ -142,14 +143,14 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         main.post {
             if (settingsGuard) {
                 service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
-                main.postDelayed({ goHome() }, 400)
+                main.postDelayed({ guarded("go-home") { goHome() } }, 400)
             } else {
                 goHome()
             }
             Brp.event("enforced", "how" to "HOME", "target" to pkg)
             showOverlay(pkg, model, web = false, redirect = false, reason = "app", guard = d.reasons.any { it.source.isGuard })
-            main.postDelayed({ handlePip(pkg) }, 300)
-            main.postDelayed({ checkStuck(pkg) }, 1_000)
+            main.postDelayed({ guarded("pip") { handlePip(pkg) } }, 300)
+            main.postDelayed({ guarded("stuck") { checkStuck(pkg) } }, 1_000)
         }
     }
 
@@ -176,13 +177,19 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             root?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_DISMISS.id)
         }
         main.postDelayed({
+            guarded("pip-cover") { coverPips(pkg) }
+        }, 300)
+    }
+
+    private fun coverPips(pkg: String) {
+        run {
             for (w in pipWindows(pkg)) {
                 val b = Rect()
                 w.getBoundsInScreen(b)
                 overlay.cover("$pkg#${w.id}", b)
                 Brp.event("enforced", "how" to "OVERLAY", "target" to pkg, "pip" to true)
             }
-        }, 300)
+        }
     }
 
     private fun checkStuck(pkg: String) {
@@ -190,7 +197,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         g.scope.launch {
             val still = service.foreground.current().any { it.packageName == pkg && !it.secondary }
             val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-            main.post { markStuck(pkg, still, lockTask) }
+            main.post { guarded("stuck-mark") { markStuck(pkg, still, lockTask) } }
         }
     }
 

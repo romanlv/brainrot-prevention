@@ -2,7 +2,6 @@ package dev.brainrotprevention.ui.strict
 
 import android.content.Intent
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.engine.ActivationRefusal
 import dev.brainrotprevention.engine.EmergencyResult
 import dev.brainrotprevention.engine.Periods
@@ -24,6 +23,7 @@ import dev.brainrotprevention.ui.platform.UiActivation
 import dev.brainrotprevention.ui.platform.UiApp
 import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiUnlock
+import dev.brainrotprevention.ui.safeScope
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -184,15 +184,15 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
                 it.scheduleId
             }
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StrictUi())
+    }.stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), StrictUi())
 
     init {
-        viewModelScope.launch { g.snapshots.current() }
+        safeScope.launch { g.snapshots.current() }
         refreshUnsupported()
     }
 
     fun refreshUnsupported() {
-        viewModelScope.launch { _unsupported.value = runCatching { deps.platform.apps.unsupportedBrowsers() }.getOrDefault(emptyList()) }
+        safeScope.launch { _unsupported.value = runCatching { deps.platform.apps.unsupportedBrowsers() }.getOrDefault(emptyList()) }
     }
 
     fun editForm(f: (StrictForm) -> StrictForm) = _form.update(f)
@@ -204,7 +204,7 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
     private fun launchBusy(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
-        viewModelScope.launch {
+        safeScope.launch {
             try {
                 block()
             } finally {
@@ -278,11 +278,11 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
     }
 
     fun setFollowed(s: Schedule, on: Boolean) {
-        viewModelScope.launch { _notice.value = g.schedules.save(s.copy(strictFollowed = on)).notice() }
+        safeScope.launch { _notice.value = g.schedules.save(s.copy(strictFollowed = on)).notice() }
     }
 
     fun resumeAll() {
-        viewModelScope.launch {
+        safeScope.launch {
             val now = deps.clock.now()
             state.value.schedules.forEach { s ->
                 if (!s.enabled) g.schedules.setEnabled(s.id, true)
@@ -293,7 +293,7 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
     }
 
     fun setExcluded(pkg: String, excluded: Boolean) {
-        viewModelScope.launch {
+        safeScope.launch {
             val cur = g.settings.getExcludedBrowsers()
             _notice.value = g.settings.setExcludedBrowsers(if (excluded) cur + pkg else cur - pkg).notice()
         }

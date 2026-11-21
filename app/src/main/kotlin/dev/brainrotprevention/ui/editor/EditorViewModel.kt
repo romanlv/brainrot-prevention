@@ -4,7 +4,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.engine.StatusCalculator
 import dev.brainrotprevention.model.AllowlistWeb
 import dev.brainrotprevention.model.LimitKind
@@ -16,6 +15,7 @@ import dev.brainrotprevention.ui.common.Notice
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.UiApp
+import dev.brainrotprevention.ui.safeScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -72,7 +72,7 @@ class EditorViewModel(
     private val _essentials = MutableStateFlow<List<UiApp>>(emptyList())
     val essentials: StateFlow<List<UiApp>> = _essentials.asStateFlow()
 
-    val counters: StateFlow<Map<Long, UsageCounter>> = g.counters.counters.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    val counters: StateFlow<Map<Long, UsageCounter>> = g.counters.counters.stateIn(safeScope, SharingStarted.Eagerly, emptyMap())
 
     private val _notice = MutableStateFlow<Notice?>(null)
     val notice: StateFlow<Notice?> = _notice.asStateFlow()
@@ -100,7 +100,7 @@ class EditorViewModel(
         // A new schedule keeps its starting point (the template) in the saved state; an existing one re-reads it from
         // the database instead, so only one copy of a large schedule is stored (review round 2, diff minor 4).
         if (scheduleId == 0L) initial?.let { if (!savedState.contains(KEY_INITIAL)) savedState.setJson(KEY_INITIAL, it) }
-        viewModelScope.launch {
+        safeScope.launch {
             if (scheduleId != 0L) {
                 val s = g.schedules.get(scheduleId)
                 original = s
@@ -114,9 +114,9 @@ class EditorViewModel(
             }
         }
         // Debounced: each keystroke in the name field must not re-encode the whole draft on the main thread.
-        viewModelScope.launch { _draft.debounce(SAVE_DEBOUNCE_MS).collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
-        viewModelScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
-        viewModelScope.launch { _essentials.value = runCatching { deps.platform.apps.allowlistEssentials() }.getOrDefault(emptyList()) }
+        safeScope.launch { _draft.debounce(SAVE_DEBOUNCE_MS).collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
+        safeScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
+        safeScope.launch { _essentials.value = runCatching { deps.platform.apps.allowlistEssentials() }.getOrDefault(emptyList()) }
     }
 
     fun chooseTemplate(t: Template?) {
@@ -247,7 +247,7 @@ class EditorViewModel(
             return
         }
         _saving.value = true
-        viewModelScope.launch {
+        safeScope.launch {
             try {
                 val toSave = if (s.id == 0L) s.copy(sortOrder = (g.schedules.getAll().maxOfOrNull { it.sortOrder } ?: -1) + 1) else s
                 // Runtime fields (on/off, pause, Start now, location state) come from the current row (diff minor 3).
@@ -272,7 +272,7 @@ class EditorViewModel(
         }
         if (_saving.value) return
         _saving.value = true
-        viewModelScope.launch {
+        safeScope.launch {
             try {
                 val r = g.schedules.delete(id)
                 _notice.value = r.notice()

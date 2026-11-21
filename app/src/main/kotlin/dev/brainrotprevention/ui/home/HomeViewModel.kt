@@ -1,7 +1,6 @@
 package dev.brainrotprevention.ui.home
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.data.PausePreset
 import dev.brainrotprevention.data.WriteResult
 import dev.brainrotprevention.engine.Periods
@@ -19,6 +18,7 @@ import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.FixResult
 import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiHealth
+import dev.brainrotprevention.ui.safeScope
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -130,7 +130,7 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
             .distinctUntilChanged()
             .flowOn(kotlinx.coroutines.Dispatchers.IO),
     ) { st, h -> st.copy(health = h) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeState())
+        .stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), HomeState())
 
     /** Opens the fix screen for the banner's missing grant ("Locked by Strict Mode" when the Settings guard is on). */
     fun fixBlocking(activity: android.app.Activity) {
@@ -145,7 +145,7 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
     }
 
     init {
-        viewModelScope.launch { g.snapshots.current() }
+        safeScope.launch { g.snapshots.current() }
     }
 
     /** Whether Strict Mode locks weakening edits of [id] right now (§9.4), from the UI's displayed state. */
@@ -177,7 +177,7 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
     }
 
     private fun run(block: suspend () -> WriteResult<*>) {
-        viewModelScope.launch {
+        safeScope.launch {
             val r = block()
             _notice.value = r.notice()
             if (r.isOk) deps.platform.engine.requestEvaluate()

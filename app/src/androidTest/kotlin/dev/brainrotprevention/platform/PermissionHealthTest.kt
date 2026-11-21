@@ -52,21 +52,39 @@ class PermissionHealthTest {
     }
 
     /**
-     * Review round 2, adversarial 2: the swipe-up gesture and keyboard shortcuts (API 36+ keys, checked on the API 37
-     * image) count as "in the accessibility shortcut", so Strict activation is refused while one targets us.
+     * Review round 2, adversarial 2: the swipe-up gesture and keyboard shortcuts (API 36+ keys) count as "in the
+     * accessibility shortcut", so Strict activation is refused while one targets us.
+     *
+     * Phone bug (2026-11-21): on user builds some of these keys are `@hide` without `@Readable` and reading them
+     * throws SecurityException, which crashed the process (and the accessibility service) when Strict Mode was
+     * started. Every key must be safe to probe; a key the app may read must be detected, an unreadable one is
+     * treated as "not bound".
      */
     @Test
     @Milestone("M8")
-    fun gestureAndKeyShortcutsCountAsAccessibilityShortcut() {
+    fun everyShortcutKeyIsSafeAndDetectedWhenReadable() {
         val comp = "${g.app.packageName}/${BlockerAccessibilityService::class.java.name}"
-        for (key in listOf("accessibility_gesture_targets", "accessibility_key_gesture_targets")) {
+        val readable = mutableListOf<String>()
+        for (key in StrictActivator.SHORTCUT_KEYS) {
+            val canRead = try {
+                android.provider.Settings.Secure.getString(g.app.contentResolver, key)
+                true
+            } catch (_: SecurityException) {
+                false
+            }
+            if (canRead) readable += key
             try {
                 ServiceRebind.shell("settings put secure $key $comp")
-                assertTrue(key, ServiceRebind.waitFor(3_000) { g.strict.inAccessibilityShortcut() })
+                if (canRead) {
+                    assertTrue(key, ServiceRebind.waitFor(3_000) { g.strict.inAccessibilityShortcut() })
+                } else {
+                    assertFalse(key, g.strict.inAccessibilityShortcut())
+                }
             } finally {
                 ServiceRebind.shell("settings delete secure $key")
             }
             assertTrue(key, ServiceRebind.waitFor(3_000) { !g.strict.inAccessibilityShortcut() })
         }
+        android.util.Log.i("BRP", "shortcut keys readable=$readable")
     }
 }

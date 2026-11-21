@@ -76,7 +76,7 @@ fun WebRulesEditor(
     var bulkOpen by rememberSaveable { mutableStateOf(false) }
     val preview = EditorOps.preview(kind, text, anywhere, verb)
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
 
     fun add(rule: WebRule) {
         if (EditorOps.atLimit(rules)) {

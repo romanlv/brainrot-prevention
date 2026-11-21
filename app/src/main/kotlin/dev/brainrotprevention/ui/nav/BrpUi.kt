@@ -107,7 +107,7 @@ fun BrpUi(deps: UiDeps, startRoute: String? = null) {
 private fun AppNav(deps: UiDeps, nav: NavHostController, start: String) {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
     Scaffold(
         bottomBar = {
             if (TABS.any { it.route == route }) {
