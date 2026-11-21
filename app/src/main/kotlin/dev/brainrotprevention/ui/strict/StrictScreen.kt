@@ -253,12 +253,21 @@ private fun StrictInactive(vm: StrictViewModel, st: StrictUi) {
             }
         }
     }
-    if (st.notCovered.isNotEmpty()) {
+    if (st.notCovered.isNotEmpty() && f.method == StrictMethod.SCHEDULES) {
         Section(
             "Not covered by Strict Mode",
             subtitle = "“Allow only selected” schedules can't be followed or locked by the Schedules method."
         ) {
             st.notCovered.forEach { Text("${it.icon} ${it.name}", modifier = Modifier.testTag("strict_not_covered_${it.name}")) }
+        }
+    } else if (st.notCovered.isNotEmpty()) {
+        // Every other method covers every schedule (review round 2, adversarial 9).
+        Section(
+            "“Allow only selected” schedules are locked too",
+            subtitle = "They can't be turned off, paused or deleted until Strict Mode ends" +
+                (if (StrictOptions.has(f.options, StrictOptions.BLOCK_SETTINGS)) ", and Settings is blocked while they run." else "."),
+        ) {
+            st.notCovered.forEach { Text("${it.icon} ${it.name}", modifier = Modifier.testTag("strict_allowlist_locked_${it.name}")) }
         }
     }
     val blocking = LocalBlockingColors.current
@@ -354,6 +363,7 @@ private fun PinField(value: String, onChange: (String) -> Unit, label: String, t
 @Composable
 private fun ColumnScope.StrictOn(vm: StrictViewModel, st: StrictUi) {
     val row = st.row
+    var extendBy by remember { mutableStateOf<Long?>(null) }
     val wait by vm.wait.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val blocking = LocalBlockingColors.current
@@ -415,6 +425,36 @@ private fun ColumnScope.StrictOn(vm: StrictViewModel, st: StrictUi) {
                             )
                         }
                         Text("Need longer?", style = MaterialTheme.typography.labelLarge)
+                        // One tap can't be undone, so it asks first; the end stays within 30 days (minor 10).
+                        extendBy?.let { ms ->
+                            val newEnd = (row.endsAt ?: st.now) + ms
+                            val tooFar = newEnd - st.now > StrictPolicy.TIMER_MAX_MS
+                            AlertDialog(
+                                onDismissRequest = { extendBy = null },
+                                modifier = Modifier
+                                    .debugRoot()
+                                    .testTag("strict_extend_confirm"),
+                                title = { Text(if (tooFar) "Can't extend that far" else "Extend Strict Mode?") },
+                                text = {
+                                    Text(
+                                        if (tooFar) {
+                                            "Strict Mode can end at most 30 days from now."
+                                        } else {
+                                            "It will end ${Format.at(newEnd, st.now, st.zone)}. This can't be undone."
+                                        },
+                                    )
+                                },
+                                confirmButton = {
+                                    if (!tooFar) {
+                                        TextButton(onClick = {
+                                            extendBy = null
+                                            vm.extendTimer(ms)
+                                        }, modifier = Modifier.testTag("strict_extend_ok")) { Text("Extend") }
+                                    }
+                                },
+                                dismissButton = { TextButton(onClick = { extendBy = null }) { Text(if (tooFar) "OK" else "Cancel") } },
+                            )
+                        }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(
                                 "+15 min" to 15 * Periods.MINUTE,
@@ -422,7 +462,7 @@ private fun ColumnScope.StrictOn(vm: StrictViewModel, st: StrictUi) {
                                 "+1 day" to Periods.DAY
                             ).forEach { (label, ms) ->
                                 OutlinedButton(
-                                    onClick = { vm.extendTimer(ms) },
+                                    onClick = { extendBy = ms },
                                     enabled = !busy,
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)

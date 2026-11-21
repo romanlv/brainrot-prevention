@@ -6,6 +6,7 @@ import dev.brainrotprevention.data.db.toModel
 import dev.brainrotprevention.engine.EditGuard
 import dev.brainrotprevention.engine.StrictPolicy
 import dev.brainrotprevention.engine.TamperCheck
+import dev.brainrotprevention.engine.ValidationError
 import dev.brainrotprevention.model.EmergencyUnblock
 import dev.brainrotprevention.model.StrictModeRow
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +43,11 @@ class StrictRepository internal constructor(private val c: DataCore) {
     suspend fun extendTimer(extraMs: Long): WriteResult<Unit> = c.write { g ->
         val row = g.strict
         if (!StrictPolicy.canExtendTimer(row, extraMs)) return@write WriteResult.NotFound("running Strict Mode timer")
+        if (!StrictPolicy.extensionWithinMax(row, extraMs, g.now)) {
+            return@write WriteResult.Invalid(
+                ValidationError("strict.endsAt", "Strict Mode can't be set to end more than 30 days from now.")
+            )
+        }
         val new = StrictPolicy.extendTimer(row, extraMs)
         WriteResult.locked(EditGuard.checkStrict(row, new))?.let { return@write it }
         dao.upsert(new.toEntity())

@@ -38,16 +38,20 @@ class ScheduleRepository internal constructor(private val c: DataCore) {
      * EditGuard. Child rows are upserted in place: limits by kind, Wi-Fi by SSID, apps by package, web rules
      * by (kind, value), windows and locations by id then value — so usage counters survive an edit (PL-M2).
      * `pausedUntil`/`manualUntil` are taken from [s] too; use [pause]/[startNow] for those.
+     * With [keepRuntime] (the editor), the runtime fields the editor doesn't edit — `enabled`, `pausedUntil`,
+     * `manualUntil` and each location's `lastState` — come from the current row instead, so a draft restored after
+     * process death can't revert a pause, a Start now or a geofence transition (review round 2, diff minor 3).
      * Returns the schedule id.
      */
-    suspend fun save(s: Schedule): WriteResult<Long> = c.write { g ->
+    suspend fun save(s: Schedule, keepRuntime: Boolean = false): WriteResult<Long> = c.write { g ->
         val rules = s.webRules.mapIndexed { i, r ->
             ScheduleValidator.normalizeRule(r)
                 ?: return@write WriteResult.Invalid(
                     ValidationError("schedule.webRules[$i]", "invalid ${r.kind.name.lowercase()} \"${r.value}\"")
                 )
         }
-        val n = s.copy(name = s.name.trim(), webRules = rules)
+        val cur = if (keepRuntime && s.id != 0L) g.schedules.firstOrNull { it.id == s.id } else null
+        val n = s.copy(name = s.name.trim(), webRules = rules).let { d -> if (cur == null) d else withRuntimeOf(d, cur) }
         ScheduleValidator.validate(n)?.let { return@write WriteResult.Invalid(it) }
         val others = g.schedules.filter { it.id != n.id }.sumOf { it.locations.size }
         if (others + n.locations.size > ScheduleValidator.MAX_GEOFENCES) {
@@ -65,6 +69,15 @@ class ScheduleRepository internal constructor(private val c: DataCore) {
         WriteResult.locked(EditGuard.checkSchedule(g.strict, g.display, g.schedules, old, n, g.now))?.let { return@write it }
         WriteResult.Ok(c.tx { writeSchedule(n, old, g.now) })
     }
+
+    private fun withRuntimeOf(draft: Schedule, cur: Schedule): Schedule = draft.copy(
+        enabled = cur.enabled,
+        pausedUntil = cur.pausedUntil,
+        manualUntil = cur.manualUntil,
+        locations = draft.locations.map { l ->
+            cur.locations.firstOrNull { it.id == l.id && l.id != 0L }?.let { l.copy(lastState = it.lastState) } ?: l
+        },
+    )
 
     /** Inserts or updates [s] with its children, in the caller's transaction. Returns the id. */
     internal suspend fun writeSchedule(s: Schedule, old: Schedule?, now: Long): Long {

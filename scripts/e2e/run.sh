@@ -173,7 +173,8 @@ for id in "${IDS[@]}"; do
       {id: $id, ok: $ok, attempts: $attempts, ms: $ms}
       + (if $retried then {retried: true} else {} end)
       + (if $rep > 1 then {repeat: $rep} else {} end)
-      + (if $ok then {} else del(.ok) end)' "$ROOT/build/verify/$id/result.json" >>"$RESULTS"
+      + (if $ok then {} else del(.ok) end)
+      + with_entries(select(.key == "teardown_failed" or .key == "teardown_recovered"))' "$ROOT/build/verify/$id/result.json" >>"$RESULTS"
   echo "run.sh: $id $([ "$ok" = true ] && echo PASS || echo FAIL)" >&2
   if [ "$ok" != true ]; then
     all_ok=0

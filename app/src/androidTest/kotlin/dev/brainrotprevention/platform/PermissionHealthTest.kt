@@ -50,4 +50,23 @@ class PermissionHealthTest {
         assertTrue(r.ok)
         assertFalse(r.settingsLockedByStrict)
     }
+
+    /**
+     * Review round 2, adversarial 2: the swipe-up gesture and keyboard shortcuts (API 36+ keys, checked on the API 37
+     * image) count as "in the accessibility shortcut", so Strict activation is refused while one targets us.
+     */
+    @Test
+    @Milestone("M8")
+    fun gestureAndKeyShortcutsCountAsAccessibilityShortcut() {
+        val comp = "${g.app.packageName}/${BlockerAccessibilityService::class.java.name}"
+        for (key in listOf("accessibility_gesture_targets", "accessibility_key_gesture_targets")) {
+            try {
+                ServiceRebind.shell("settings put secure $key $comp")
+                assertTrue(key, ServiceRebind.waitFor(3_000) { g.strict.inAccessibilityShortcut() })
+            } finally {
+                ServiceRebind.shell("settings delete secure $key")
+            }
+            assertTrue(key, ServiceRebind.waitFor(3_000) { !g.strict.inAccessibilityShortcut() })
+        }
+    }
 }

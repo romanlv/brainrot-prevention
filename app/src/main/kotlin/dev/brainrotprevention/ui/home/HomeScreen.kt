@@ -109,6 +109,12 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
                     modifier = Modifier.semantics { heading() },
                 )
             }
+            if (state.blockingOff) {
+                item {
+                    val activity = androidx.activity.compose.LocalActivity.current
+                    BlockingOffBanner(state) { activity?.let(vm::fixBlocking) }
+                }
+            }
             item { StatusCard(state) }
             item {
                 QuickBlockCard(
@@ -166,7 +172,9 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
         })
     }
     startFor?.let { s ->
-        StartNowSheet(s.name, alsoArms = startNowAlsoArms(s, state.now), onDismiss = { startFor = null }, onPick = {
+        StartNowSheet(s.name, alsoArms = startNowAlsoArms(s, state.now, vm.strictLocksEditing()), onDismiss = {
+            startFor = null
+        }, onPick = {
             startFor = null
             vm.startNow(s.id, it)
         })
@@ -185,6 +193,36 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
         )
     }
     NoticeHost(notice, vm::dismissNotice)
+}
+
+/** Review round 2, adversarial 6: say plainly that nothing is enforced, with the way to fix it. */
+@Composable
+private fun BlockingOffBanner(state: HomeState, onFix: () -> Unit) {
+    val what = when (state.missingGrant) {
+        dev.brainrotprevention.ui.platform.UiGrant.ACCESSIBILITY -> "The Brainrot Prevention accessibility service isn't running."
+        dev.brainrotprevention.ui.platform.UiGrant.USAGE_ACCESS -> "Usage access is off."
+        else -> "A required permission is missing."
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("blocking_off_banner"),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Blocking is off", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("$what Nothing is blocked until you turn it back on.", style = MaterialTheme.typography.bodyMedium)
+            Button(
+                onClick = onFix,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("blocking_off_fix"),
+            ) { Text("Fix") }
+        }
+    }
 }
 
 @Composable

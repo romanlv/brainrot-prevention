@@ -108,11 +108,37 @@
   crashed service is not rebound), and the check also runs every minute while the service is unbound and on every
   alarm. Background location is required (and the geofence registration problem shown) when a location trigger exists.
 - **Default launcher** is re-resolved at most once a second during evaluations (a change sends no broadcast).
-- **Notification sweep** (§10.4) runs only when the set of schedules hiding notifications changes; "N held today" counts
-  each notification key once per day.
+- **Notification sweep** (§10.4) runs when the set of schedules hiding notifications changes, or when the config snapshot
+  changes while something hides notifications (an app added to a running Quick Block, review round 2 diff major 1); "N held
+  today" counts each notification key once per day.
+- **Accessibility shortcut check (§9.2)** reads every shortcut key present on API 37 (framework.jar strings):
+  `accessibility_shortcut_target_service`, `_button_targets`, `_qs_targets`, `_gesture_targets` (2/3-finger swipe up),
+  `_key_gesture_targets` (keyboard), `_top_row_key_targets` and `_quick_access_targets`. It is checked at activation only.
+- **Browser windows (§7.8):** `lastUrl`, the throttle and the rewrite target are per (browser, window); every application
+  window of a browser is read before each evaluation and every URL-bar match is tried. The 10 s `url_bar_missing` clock is
+  per browser and survives the browser leaving the foreground for 60 s, so relaunching a web app that the browser draws
+  without a URL bar doesn't restart it (review round 2, adversarial 3 and 5).
+- **Allowlist essentials (§6.3)** also cover the Android 14+ system screens other apps open, checked on the API 37 image:
+  the share sheet (`com.android.intentresolver`), the photo picker (`com.google.android.providers.media.module`,
+  `com.google.android.photopicker`, and the AOSP names), Credential Manager (`com.android.credentialmanager`) and the
+  captive-portal login; plus the packages `ACTION_CHOOSER`, `ACTION_PICK_IMAGES` and `CAPTIVE_PORTAL` resolve to. From Play
+  Services only the account picker, Google sign-in and passkey/password sheets are essential, by component (not the whole
+  `com.google.android.gms` package).
+- **Home "Blocking is off"** banner (with Fix) replaces the red "Blocking now" headline ("Would be blocking now: …") when a
+  required grant is missing or the accessibility service isn't connected; the displayed statuses stay the UI's own.
 - **Poll loop** sleeps (no 300 ms wakeups) while the screen is off or nothing is armed, until SCREEN_ON or an evaluation.
 
 ## Open
+- **Two windows of one browser on a device (review round 2, adversarial 3):** the reader, engine and enforcer handle
+  every window (engine test `Round2RegressionTest.everyBrowserWindowIsJudged`), but there is no G3/scenario for it: the
+  fixture browser is `singleTask` (one window), and a same-package split screen needs a multi-instance fixture activity
+  plus a scripted split-screen launch on the phone emulator. Which split stage `getWindows()` lists first was not checked.
+- **WebAPK / TWA drawn by Chrome (adversarial 5):** a Chrome window without a URL bar is judged only through the 10 s
+  `url_bar_missing` rule (now not reset on relaunch, 60 s grace). Detecting the WebAPK that owns Chrome's task (to block
+  at once, or as the listed app) was not done: minting a WebAPK needs Play Services' WebAPK server, which the emulator
+  image can't reach offline, so the task/component shape couldn't be verified.
+- **Shortcut assigned while Strict Mode is ON without BLOCK_SETTINGS (adversarial 2, second part):** accepted by §17;
+  no health notice is posted for it.
 - **External displays / desktop windows** (review round 1, platform minor 1): the foreground set uses `getWindows()` (default
   display) and HOME/overlay act on the default display only. Supporting other displays needs `getWindowsOnAllDisplays()`
   plus a per-display overlay window and a way to close an app window on another display (there is no per-display HOME);
@@ -173,6 +199,22 @@
   (plus its `$InternalActivity`), and `ADD_DEVICE_ADMIN` resolves to
   `.applications.specialaccess.deviceadmin.DeviceAdminAdd` (both checked with `cmd package query-activities` on the API 37
   emulator); the names in §9.3 without the `.password.`/`.applications…` packages don't exist on API 28+.
+- **Strict SCHEDULES lock-in (review round 2, adversarial 7):** activation with LOCK_EDITING is refused
+  (`UNBOUNDED_FOLLOWED`) while a followed item blocks with no end of its own: Quick Block without a timer, Start now
+  "until I stop it", or an enabled blocklist schedule whose triggers always hold (no triggers, or time windows covering the
+  whole week when time alone arms it) and that has no budget. While SCHEDULES + LOCK_EDITING is ON, starting such an item on
+  a followed schedule / Quick Block (followAll) is refused (`UNBOUNDED_UNDER_STRICT`): Quick Block "No timer", Start now
+  "until I stop it", turning on or creating an always-on schedule, removing all windows. Without LOCK_EDITING the user can
+  still stop the item, so nothing is refused. Spec §9.5 doesn't foresee this; without it Strict Mode never reaches STANDBY.
+- **TIMER extension** is capped so the end stays within 30 days of now (§9.5 range); the UI asks before extending.
+- **Proxy URLs (adversarial 4):** DOMAIN rules and host keywords also match the original host of a Google Translate proxy
+  (`<host-with-dashes>.translate.goog`), an AMP cache URL (`<host>.cdn.ampproject.org`, `cdn.ampproject.org/c|v|i/[s/]<host>/…`)
+  and Google's AMP viewer (`google.<tld>/amp/[s/]<host>/…`). The subdomain encoding is `-` for `.` and `--` for `-`;
+  punycode hosts in that encoding are not decoded.
+- **Web rules per schedule (adversarial 1):** at most 2,000 websites and keywords per schedule and in Quick Block, enforced
+  by `ScheduleValidator` (save, import before parsing) and by bulk add (lines past the cap are counted, not parsed). §4.1
+  sets no limit; the cap keeps a pasted hosts file from freezing the one process that also hosts the accessibility service.
+  The service is not moved to its own process (DataStore and Room are single-process here).
 - **WeakenChecker:** adding another row of an existing trigger type (rows are OR'd) is allowed even under ALL; under ALLOWLIST+OPEN, web-rule edits are free (they have no effect until ONLY_LISTED, which is itself a strengthening).
 
 ## Data layer (core:data)
@@ -223,5 +265,14 @@
 - **G3 helpers** (`@Milestone`, `@NoGrant`, `MilestoneFilter`) live in `testing/fixtures` (main source set, consumed as an
   `androidTestImplementation`). Tests without `@Milestone` are dropped when a milestone filter is given. UI tests are tagged
   M4 (editor, pause, allowlist), M8 (Strict) and M9 (onboarding, SAF backup); `OnboardingNoGrantTest` is the `@NoGrant` class.
+- **Editor saved state (review round 2, diff minor 3/4/5):** the editor's Save takes `enabled`, `pausedUntil`,
+  `manualUntil` and location `lastState` from the current row (`ScheduleRepository.save(s, keepRuntime = true)`), so a draft
+  restored after process death can't revert them. All editor keys together stay under 64 KB of Parcel bytes (UTF-16); an
+  existing schedule's starting point is re-read from the database instead of being stored; draft writes are debounced
+  (250 ms). The website field is Compose snapshot state written synchronously. The bulk-paste dialog keeps at most 64,000
+  characters; bulk and CSV parsing run on `Dispatchers.Default`; the rule list shows 50 rows at a time ("Show more").
+- **Start now on an Off schedule** says it stays on (and can't be turned off while Strict Mode locks editing).
+- **Strict form, non-SCHEDULES methods:** "Allow only selected" schedules are listed as "locked too" (with "Settings is blocked
+  while they run" under BLOCK_SETTINGS) instead of "Not covered".
 - **UI text** is in Kotlin (English only in v1); `strings.xml` holds the app name.
 

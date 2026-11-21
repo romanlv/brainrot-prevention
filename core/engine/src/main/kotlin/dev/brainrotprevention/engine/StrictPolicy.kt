@@ -1,13 +1,16 @@
 package dev.brainrotprevention.engine
 
+import dev.brainrotprevention.model.Combine
 import dev.brainrotprevention.model.EmergencyUnblock
 import dev.brainrotprevention.model.Mode
+import dev.brainrotprevention.model.QuickBlock
 import dev.brainrotprevention.model.Schedule
 import dev.brainrotprevention.model.StrictDisplayState
 import dev.brainrotprevention.model.StrictMethod
 import dev.brainrotprevention.model.StrictModeRow
 import dev.brainrotprevention.model.StrictOptions
 import dev.brainrotprevention.model.StrictState
+import dev.brainrotprevention.model.TriggerType
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -56,6 +59,12 @@ enum class ActivationRefusal {
     INVALID_PIN,
     INVALID_COOLDOWN,
     FOLLOWED_SET_EMPTY,
+
+    /**
+     * SCHEDULES with LOCK_EDITING while a followed item blocks with no end (Quick Block without a timer, Start now
+     * "until I stop it", an always-on schedule): Strict Mode would never reach STANDBY and could not be turned off.
+     */
+    UNBOUNDED_FOLLOWED,
 }
 
 sealed interface ActivationResult {
@@ -136,6 +145,41 @@ object StrictPolicy {
         return if (active) StrictDisplayState.ACTIVE else StrictDisplayState.STANDBY
     }
 
+    /** Whether [s] would be followed by [row] (the [followed] rule for one schedule, also for a new one). */
+    fun isFollowed(row: StrictModeRow, s: Schedule): Boolean =
+        if (row.followAllSchedules) s.mode != Mode.ALLOWLIST else s.strictFollowed && s.mode == Mode.BLOCKLIST
+
+    /**
+     * A schedule that, once armed, stays blocking with no end of its own (review round 2, adversarial 7): Start now
+     * "until I stop it", or enabled with triggers that always hold (no triggers = "Always on", or time windows
+     * covering the whole week when the time trigger alone arms it). A schedule with a budget is not unbounded
+     * (it stops blocking at the next period reset). Pauses don't count (a pause ends by itself).
+     */
+    fun isUnbounded(s: Schedule): Boolean {
+        if (s.mode != Mode.BLOCKLIST || s.limits.isNotEmpty()) return false
+        if (s.manualUntil == Schedule.UNTIL_STOPPED) return true
+        if (!s.enabled) return false
+        val present = s.triggerTypes
+        if (present.isEmpty()) return true
+        if (TriggerType.TIME !in present) return false
+        if (s.combine == Combine.ALL && present != setOf(TriggerType.TIME)) return false
+        return WeakenChecker.coverage(s.copy(wifi = emptyList(), locations = emptyList())).cardinality() == WeakenChecker.CELLS
+    }
+
+    /** Quick Block running with no timer. */
+    fun isUnbounded(q: QuickBlock): Boolean = q.active && q.until == null && !q.isEmpty
+
+    /** Followed items (schedule ids, [QUICK_BLOCK_ID]) that block with no end under [row]'s following rule. */
+    fun unboundedFollowed(row: StrictModeRow, schedules: List<Schedule>, quickBlock: QuickBlock): List<Long> {
+        val f = followed(row, schedules)
+        val ids = schedules.filter { it.id in f.scheduleIds && isUnbounded(it) }.map { it.id }
+        return if (f.quickBlock && isUnbounded(quickBlock)) ids + QUICK_BLOCK_ID else ids
+    }
+
+    /** SCHEDULES with LOCK_EDITING: the method whose end depends on the followed items ending. */
+    fun locksUnbounded(row: StrictModeRow): Boolean =
+        row.isOn && row.method == StrictMethod.SCHEDULES && row.has(StrictOptions.LOCK_EDITING)
+
     /** SCHEDULES with an empty followed set becomes INACTIVE (§9.5). */
     fun shouldEndForEmptyFollowedSet(row: StrictModeRow, schedules: List<Schedule>): Boolean =
         row.isOn && row.method == StrictMethod.SCHEDULES && followed(row, schedules).isEmpty
@@ -145,6 +189,7 @@ object StrictPolicy {
         facts: StrictFacts,
         schedules: List<Schedule>,
         current: StrictModeRow,
+        quickBlock: QuickBlock = QuickBlock(),
     ): ActivationRefusal? = when {
         current.isOn -> ActivationRefusal.ALREADY_ON
         !facts.accessibilityConnected -> ActivationRefusal.ACCESSIBILITY_NOT_CONNECTED
@@ -158,6 +203,10 @@ object StrictPolicy {
         req.method == StrictMethod.COOLDOWN && req.cooldownMin !in COOLDOWN_CHOICES -> ActivationRefusal.INVALID_COOLDOWN
         req.method == StrictMethod.SCHEDULES &&
             followed(StrictModeRow(followAllSchedules = req.followAllSchedules), schedules).isEmpty -> ActivationRefusal.FOLLOWED_SET_EMPTY
+        req.method == StrictMethod.SCHEDULES &&
+            StrictOptions.has(req.options, StrictOptions.LOCK_EDITING) &&
+            unboundedFollowed(StrictModeRow(followAllSchedules = req.followAllSchedules), schedules, quickBlock).isNotEmpty() ->
+            ActivationRefusal.UNBOUNDED_FOLLOWED
         else -> null
     }
 
@@ -170,8 +219,9 @@ object StrictPolicy {
         wallNow: Long,
         elapsedNow: Long,
         salt: ByteArray = newSalt(),
+        quickBlock: QuickBlock = QuickBlock(),
     ): ActivationResult {
-        checkActivation(req, facts, schedules, current)?.let { return ActivationResult.Refused(it) }
+        checkActivation(req, facts, schedules, current, quickBlock)?.let { return ActivationResult.Refused(it) }
         val timer = req.method == StrictMethod.TIMER
         val pin = req.pin?.takeIf { req.method == StrictMethod.PIN }
         return ActivationResult.Activated(
@@ -204,6 +254,15 @@ object StrictPolicy {
 
     /** Whether [extendTimer] applies: Strict Mode is ON with a TIMER, and [extraMs] > 0. */
     fun canExtendTimer(row: StrictModeRow, extraMs: Long): Boolean = row.isOn && row.method == StrictMethod.TIMER && extraMs > 0
+
+    /**
+     * Whether extending by [extraMs] keeps the end within [TIMER_MAX_MS] of [wallNow] (the §9.5 range also caps
+     * extensions, review round 2 minor 10).
+     */
+    fun extensionWithinMax(row: StrictModeRow, extraMs: Long, wallNow: Long): Boolean {
+        val endsAt = row.endsAt ?: return false
+        return endsAt + extraMs - wallNow <= TIMER_MAX_MS
+    }
 
     /** Extends a running TIMER by [extraMs] (allowed under LOCK_EDITING). Precondition: [canExtendTimer]. */
     fun extendTimer(row: StrictModeRow, extraMs: Long): StrictModeRow {

@@ -43,7 +43,9 @@ Nothing is written when the result is not `Ok`.
   in total, then `EditGuard.checkSchedule`. **Child rows are upserted in place**: limits by `kind`, Wi-Fi by
   `ssid`, apps by package, web rules by `(kind, value)`, windows and locations by id, then by value. Unmatched
   old rows are deleted. So a usage counter survives any edit that keeps its limit kind (PL-M2); removing the
-  limit deletes its counter (FK cascade). `pausedUntil`/`manualUntil` are written from `s` as well.
+  limit deletes its counter (FK cascade). `pausedUntil`/`manualUntil` are written from `s` as well, except with
+  `save(s, keepRuntime = true)` (the editor): then `enabled`, `pausedUntil`, `manualUntil` and location `lastState` come
+  from the current row.
 - `delete(id)` (checkDelete), `pause(id, until)` (checkPause), `resume(id)`, `setEnabled(id, enabled)` (off also
   clears the pause; checkTurnOff), `startNow(id, until /* Schedule.UNTIL_STOPPED */)`, `stopNow(id)` (MANUAL_SHORTENED
   while locked) — all `WriteResult<Unit>`.
@@ -61,7 +63,8 @@ Nothing is written when the result is not `Ok`.
 - `strict: Flow<StrictModeRow>` (default INACTIVE row when none), `emergencyLog: Flow<List<EmergencyUnblock>>`,
   `suspend get()`, `suspend getEmergencyLog()`.
 - `edit(new): WriteResult<Unit>` — user edits (extend TIMER, followAll false→true); `EditGuard.checkStrict`.
-- `extendTimer(extraMs): WriteResult<Unit>` — reads the row under the write lock; `NotFound` when no TIMER is running.
+- `extendTimer(extraMs): WriteResult<Unit>` — reads the row under the write lock; `NotFound` when no TIMER is running,
+  `Invalid` when the end would be more than 30 days from now.
 - Unguarded, for rows produced by `StrictPolicy`: `writePolicyResult(row)` (activate, unlock*, wrong-PIN,
   `deactivated` on `cleanup.strictEnd`, `afterBoot`), `writeTamperCheck(t: TamperCheck)` (row + whole log, no-op
   if `!t.changed`), `writeEmergency(row, entry): Long` (row + new log entry, one transaction).

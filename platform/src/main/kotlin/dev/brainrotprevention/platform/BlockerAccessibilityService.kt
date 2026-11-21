@@ -130,7 +130,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
     internal fun webTargets(fg: List<ForegroundApp>): List<WebTarget> {
         // Poll-time read for browsers in front, so a URL bar that changed without an event is still seen.
         val map = browsers()
-        for (a in fg) map[a.packageName]?.let { urlReader.extract(a.packageName, it) }
+        for (pkg in fg.mapTo(LinkedHashSet()) { it.packageName }) map[pkg]?.let { urlReader.extract(pkg, it) }
         return urlReader.targets(fg)
     }
 

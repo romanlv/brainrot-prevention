@@ -92,6 +92,9 @@ data class StrictSummary(val method: String, val ends: String, val locks: List<S
             )
             val blocklist = schedules.filter { it.mode == Mode.BLOCKLIST }
             val applies = when {
+                f.method != StrictMethod.SCHEDULES && schedules.any { it.mode == Mode.ALLOWLIST } ->
+                    "Covers every schedule and Quick Block, including “Allow only selected” schedules" +
+                        (if (StrictOptions.has(f.options, StrictOptions.BLOCK_SETTINGS)) " (Settings is blocked while they run)." else ".")
                 f.method != StrictMethod.SCHEDULES -> "Covers every schedule and Quick Block."
                 f.followAll ->
                     "Follows all schedules and Quick Block, including ones you add later" +

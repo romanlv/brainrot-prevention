@@ -52,6 +52,7 @@ class PreparedSnapshot(val snapshot: ConfigSnapshot) {
         canonicalComponent(it)
     }
     val essentials: Set<String> = PackageDefaults.ALLOWLIST_ESSENTIALS + snapshot.allowlistEssentials
+    val essentialComponents: Set<String> = PackageDefaults.ALLOWLIST_ESSENTIAL_COMPONENTS.mapTo(HashSet()) { canonicalComponent(it) }
     val settingsGuard: Set<String> = snapshot.strictGuards.settings.toHashSet()
     val installerGuard: Set<String> = snapshot.strictGuards.installer.toHashSet()
     val webApps: Map<String, NormalizedUrl> = snapshot.webApps.mapValues { UrlNormalizer.normalizeDetected(it.value) }
@@ -104,10 +105,19 @@ object DecisionMaker {
     )
 
     /** List match of an app for [s] irrespective of blocking (used for counting and matching). */
-    fun appListMatch(p: PreparedSnapshot, s: EffectiveSchedule, pkg: String, keyguardLocked: Boolean): Boolean = when (s.mode) {
+    fun appListMatch(
+        p: PreparedSnapshot,
+        s: EffectiveSchedule,
+        pkg: String,
+        keyguardLocked: Boolean,
+        component: String? = null,
+    ): Boolean = when (s.mode) {
         Mode.BLOCKLIST -> pkg in s.apps || p.webApps[pkg]?.let { UrlMatcher.matchesAny(s.webRules, it) } == true
-        Mode.ALLOWLIST -> pkg !in s.apps && pkg !in p.essentials && !keyguardLocked
+        Mode.ALLOWLIST -> pkg !in s.apps && pkg !in p.essentials && !keyguardLocked && !isEssentialComponent(p, component)
     }
+
+    private fun isEssentialComponent(p: PreparedSnapshot, component: String?): Boolean =
+        component != null && PreparedSnapshot.canonicalComponent(component) in p.essentialComponents
 
     /** Web page match for [s] irrespective of blocking; false for pages always allowed. */
     fun pageMatch(p: PreparedSnapshot, s: EffectiveSchedule, target: WebTarget, url: NormalizedUrl): Boolean {
@@ -142,7 +152,7 @@ object DecisionMaker {
         for (s in p.effective) {
             val st = ctx.statuses[s.id] ?: continue
             val (limit, until) = activeLimit(st, ctx.gated(s.id, pkg)) ?: continue
-            if (appListMatch(p, s, pkg, ctx.keyguardLocked)) {
+            if (appListMatch(p, s, pkg, ctx.keyguardLocked, app.component)) {
                 reasons += Reason(s.source(), limit, until)
                 continue
             }

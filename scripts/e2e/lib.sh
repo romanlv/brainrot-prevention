@@ -443,9 +443,11 @@ quick_block_assertions() {
   launch "$T_PIP" --ez enterPip true
   assert_event "blocked(\"$T\")" 3
   sleep_s 2
-  if ! has_events '.ev=="overlay" and .state=="shown"'; then
+  # A PiP window that is still there must have been covered (enforced with pip=true). The full-screen overlay from
+  # the launch before the fixture entered PiP doesn't count (review round 2, diff minor 9).
+  if ! has_events '.ev=="enforced" and .pip==true'; then
     if adb shell dumpsys activity activities | tr -d '\r' | grep -ci 'windowingMode=pinned\|mode=pinned' >/dev/null; then
-      fail_test "PiP window still visible and not covered by the overlay" '.ev=="overlay" and .state=="shown"' 2
+      fail_test "PiP window still visible and not covered by the overlay" '.ev=="enforced" and .pip==true' 2
     fi
   fi
 }

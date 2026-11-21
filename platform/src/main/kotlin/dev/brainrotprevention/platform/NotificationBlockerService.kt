@@ -25,6 +25,9 @@ class NotificationBlockerService : NotificationListenerService() {
     /** Schedules hiding notifications at the last sweep; the active list is only fetched when this changes. */
     @Volatile private var lastHiding: Set<Long>? = null
 
+    /** Config snapshot of the last sweep: an edit (an app added to a hiding schedule) sweeps again. */
+    @Volatile private var lastSnapshot: ConfigSnapshot? = null
+
     /** "N held today" counts each notification key once per day (updates of one notification are re-snoozed). */
     private val counted = java.util.concurrent.ConcurrentHashMap<String, String>() // key → day
 
@@ -33,6 +36,7 @@ class NotificationBlockerService : NotificationListenerService() {
         g.listener = this
         Brp.event("service", "name" to "listener", "state" to "connected")
         lastHiding = null
+        lastSnapshot = null
         g.scope.launch { g.engineHost.evaluateNow("listener-connected").let { sweep(null) } }
     }
 
@@ -45,7 +49,12 @@ class NotificationBlockerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val n = sbn ?: return
-        handle(n)
+        // Main thread: an engine exception here would kill the process and the accessibility service with it.
+        try {
+            handle(n)
+        } catch (e: Exception) {
+            Brp.event("error", "where" to "notification", "msg" to e.toString())
+        }
     }
 
     private fun facts(sbn: StatusBarNotification): NotificationFacts {
@@ -91,19 +100,27 @@ class NotificationBlockerService : NotificationListenerService() {
     }
 
     /**
-     * After every evaluation: when the set of schedules hiding notifications changes, apply the rules to the
-     * active notifications. Nothing is fetched over binder while that set stays the same (new posts go through
-     * [onNotificationPosted]).
+     * After every evaluation: when the set of schedules hiding notifications changes, or the config changed
+     * while something hides notifications (an app added to a running Quick Block), apply the rules to the active
+     * notifications. Nothing is fetched over binder while both stay the same (new posts go through
+     * [onNotificationPosted]); snapshots change only on config edits.
      */
     internal fun onEvaluated(r: EvaluationResult, snapshot: ConfigSnapshot) {
         val hiding = g.engineHost.notificationHidingIds(snapshot, r)
-        if (hiding == lastHiding) return
+        if (!SweepKey.changed(lastHiding, lastSnapshot, hiding, snapshot)) return
         lastHiding = hiding
+        lastSnapshot = snapshot
         if (hiding.isNotEmpty()) sweep(null)
     }
 
     private companion object {
         const val MAX_COUNTED_KEYS = 2_000
+    }
+
+    /** When to sweep the active notifications again (pure, unit-tested). */
+    internal object SweepKey {
+        fun changed(lastHiding: Set<Long>?, lastSnapshot: ConfigSnapshot?, hiding: Set<Long>, snapshot: ConfigSnapshot): Boolean =
+            hiding != lastHiding || (hiding.isNotEmpty() && snapshot !== lastSnapshot)
     }
 
     private fun sweep(only: Set<String>?) {

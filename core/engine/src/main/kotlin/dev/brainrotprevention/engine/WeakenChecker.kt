@@ -42,6 +42,12 @@ enum class Refusal {
     STRICT_CHANGED,
     SETTING_LOCKED,
     IMPORT_LOCKED,
+
+    /**
+     * Strict SCHEDULES with LOCK_EDITING: starting something on a followed item that blocks with no end (no-timer
+     * Quick Block, Start now "until I stop it", an always-on schedule) would keep Strict Mode on for good.
+     */
+    UNBOUNDED_UNDER_STRICT,
 }
 
 sealed interface EditCheck {
@@ -251,6 +257,14 @@ object EditGuard {
         new: Schedule?,
         now: Long,
     ): EditCheck {
+        if (new != null &&
+            StrictPolicy.locksUnbounded(row) &&
+            StrictPolicy.isFollowed(row, new) &&
+            StrictPolicy.isUnbounded(new) &&
+            (old == null || !StrictPolicy.isUnbounded(old) || !StrictPolicy.isFollowed(row, old))
+        ) {
+            return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
+        }
         val id = old?.id ?: return EditCheck.Allowed
         if (!isLocked(row, display, schedules, id)) return EditCheck.Allowed
         return WeakenChecker.checkSchedule(old, new, now)
@@ -281,8 +295,12 @@ object EditGuard {
         old: QuickBlock,
         new: QuickBlock,
         now: Long,
-    ): EditCheck =
-        if (isLocked(row, display, schedules, QUICK_BLOCK_ID)) WeakenChecker.checkQuickBlock(old, new, now) else EditCheck.Allowed
+    ): EditCheck {
+        if (StrictPolicy.locksUnbounded(row) && row.followAllSchedules && StrictPolicy.isUnbounded(new) && !StrictPolicy.isUnbounded(old)) {
+            return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
+        }
+        return if (isLocked(row, display, schedules, QUICK_BLOCK_ID)) WeakenChecker.checkQuickBlock(old, new, now) else EditCheck.Allowed
+    }
 
     /**
      * Excluded browsers and `dayStartHour` are global: they weaken the followed schedules too (an excluded

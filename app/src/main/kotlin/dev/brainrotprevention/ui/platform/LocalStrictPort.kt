@@ -28,7 +28,15 @@ class LocalStrictPort(
 
     override suspend fun activate(req: StrictActivation): UiActivation {
         val c = graph.clock.read()
-        val r = StrictPolicy.activate(req, facts(), graph.schedules.getAll(), graph.strict.get(), c.now, c.elapsed)
+        val r = StrictPolicy.activate(
+            req,
+            facts(),
+            graph.schedules.getAll(),
+            graph.strict.get(),
+            c.now,
+            c.elapsed,
+            quickBlock = graph.quickBlock.get(),
+        )
         return when (r) {
             is ActivationResult.Activated -> {
                 graph.strict.writePolicyResult(r.row)
@@ -67,8 +75,7 @@ class LocalStrictPort(
         return apply(StrictPolicy.turnOffFromStandby(graph.strict.get(), display, startedElapsed, graph.clock.elapsed()))
     }
 
-    override suspend fun extendTimer(extraMs: Long): WriteResult<Unit> =
-        graph.strict.edit(StrictPolicy.extendTimer(graph.strict.get(), extraMs))
+    override suspend fun extendTimer(extraMs: Long): WriteResult<Unit> = graph.strict.extendTimer(extraMs)
 
     override suspend fun finishEmergency(startedElapsed: Long): EmergencyResult {
         val c = graph.clock.read()

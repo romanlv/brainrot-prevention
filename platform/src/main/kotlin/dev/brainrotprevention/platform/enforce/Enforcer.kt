@@ -88,13 +88,17 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             note(pkg, now)
             enforceApp(pkg, d, snapshot, r)
         }
+        val blockedApps = r.apps.filterValues { it.isBlock }.keys
         for (p in r.pages) {
             val d = p.decision as? Decision.Block ?: continue
             val pkg = p.target.browserPackage
             blockedPkgs += pkg
-            if (pkg in r.apps.filterValues { it.isBlock }.keys) continue
-            val last = lastEnforcedRt[pkg]
+            if (pkg in blockedApps) continue
+            // Debounced per browser window: two windows of one browser are enforced independently.
+            val key = "$pkg#${p.target.windowId}"
+            val last = lastEnforcedRt[key]
             if (last != null && now - last < DEBOUNCE_MS) continue
+            lastEnforcedRt[key] = now
             note(pkg, now)
             enforceWeb(p, d, snapshot, r)
         }
@@ -205,13 +209,14 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         Events.decision(pkg, p.target.url, d)
         val host = p.url.hostUnicode.ifEmpty { p.target.url }
         val model = model(pkg, host, icon(pkg), d, snapshot, r, web = true)
-        service.urlReader.forget(pkg)
+        val wid = p.target.windowId
+        service.urlReader.forget(pkg, wid)
         g.scope.launch {
             val uri = blankUri
             runCatching { service.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val entry = snapshot.browsers.firstOrNull { it.packageName == pkg }
             var how = if (Build.VERSION.SDK_INT >= 30 && entry?.canEditUrl != false && entry != null) {
-                if (rewrite(pkg, entry, uri.toString()) && rewriteLanded(pkg, entry)) "URL_REWRITE" else null
+                if (rewrite(pkg, wid, entry, uri.toString()) && rewriteLanded(pkg, wid, entry)) "URL_REWRITE" else null
             } else {
                 null
             }
@@ -220,7 +225,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
                 service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 how = "BACK"
             }
-            service.urlReader.forget(pkg)
+            service.urlReader.forget(pkg, wid)
             Brp.event("enforced", "how" to how, "target" to pkg, "url" to p.target.url)
             val worked = how != "BACK"
             main.post { showOverlay(pkg, model, web = true, redirect = worked, reason = "web") }
@@ -228,13 +233,9 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     }
 
     @RequiresApi(30)
-    private suspend fun rewrite(pkg: String, entry: dev.brainrotprevention.model.BrowserEntry, text: String): Boolean {
-        val root = service.foreground.windowsSafe()
-            .firstOrNull {
-                it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                    runCatching { it.root?.packageName?.toString() }.getOrNull() == pkg
-            }
-            ?.root ?: return false
+    private suspend fun rewrite(pkg: String, windowId: Int, entry: dev.brainrotprevention.model.BrowserEntry, text: String): Boolean {
+        // The window the blocked URL was read in (review round 2, adversarial 3), not the first window of the browser.
+        val root = service.urlReader.rootFor(pkg, windowId) ?: return false
         val node = service.urlReader.find(root, pkg, entry)?.first ?: return false
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -244,12 +245,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             if (node.isFocused) break
             delay(30)
         }
-        val fresh = service.foreground.windowsSafe()
-            .firstOrNull {
-                it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                    runCatching { it.root?.packageName?.toString() }.getOrNull() == pkg
-            }
-            ?.root?.let { service.urlReader.find(it, pkg, entry)?.first } ?: node
+        val fresh = service.urlReader.rootFor(pkg, windowId)?.let { service.urlReader.find(it, pkg, entry)?.first } ?: node
         fresh.refresh()
         val actions = fresh.actionList.map { it.id }
         val imeEnter = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
@@ -264,11 +260,11 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
      * typed `content://` URI as a search (or refused it) falls back to the intent redirect instead of
      * reporting a rewrite that didn't happen.
      */
-    private suspend fun rewriteLanded(pkg: String, entry: dev.brainrotprevention.model.BrowserEntry): Boolean {
+    private suspend fun rewriteLanded(pkg: String, windowId: Int, entry: dev.brainrotprevention.model.BrowserEntry): Boolean {
         val prefix = g.packages.redirectUriPrefix.lowercase()
         val deadline = SystemTimeAndroid.elapsedRealtime() + 1_000
         while (SystemTimeAndroid.elapsedRealtime() < deadline) {
-            val t = service.urlReader.peek(pkg, entry)?.lowercase()
+            val t = service.urlReader.peek(pkg, entry, windowId)?.lowercase()
             if (t != null && (t.startsWith(prefix) || t == "about:blank")) return true
             delay(100)
         }
@@ -290,11 +286,14 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     // ---- overlay -----------------------------------------------------------------------------
 
     private fun showOverlay(pkg: String, m: BlockModel, web: Boolean, redirect: Boolean, reason: String, guard: Boolean = false) {
+        // The Close lock-out runs from the first guard show for this target, not from every 700 ms re-show: a guarded
+        // window that HOME can't remove would otherwise refresh it forever (review round 2, diff minor 7).
+        val sameGuard = guard && overlayGuard && overlayTarget == pkg && overlay.isShown
         overlayTarget = pkg
         overlayWeb = web
         redirectWorked = redirect
         overlayGuard = guard
-        if (guard) guardShownRt = SystemTimeAndroid.elapsedRealtime()
+        if (guard && !sameGuard) guardShownRt = SystemTimeAndroid.elapsedRealtime()
         overlay.show(m.copy(token = ++token, target = pkg), reason)
         Brp.event("enforced", "how" to "OVERLAY", "target" to pkg)
     }

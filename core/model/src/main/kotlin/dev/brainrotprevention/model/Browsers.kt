@@ -65,9 +65,48 @@ object PackageDefaults {
     /** `android.app.action.ADD_DEVICE_ADMIN` resolves here on API 28–37. */
     const val DEVICE_ADMIN_ADD_COMPONENT = "com.android.settings/.applications.specialaccess.deviceadmin.DeviceAdminAdd"
 
+    /**
+     * Always allowed in "Allow only selected" schedules (§6.3). Besides Files and Settings, the system screens that
+     * moved out of `android` on Android 14+ and that the app picker can't offer (review round 2, adversarial 8;
+     * packages and activities checked on the API 37 image with `cmd package resolve-activity` and the APK manifests):
+     * the share sheet (`ACTION_CHOOSER` → `com.android.intentresolver/.ChooserActivity`), the photo picker
+     * (`MediaStore.ACTION_PICK_IMAGES` → the MediaProvider module, and the newer `photopicker` package), Credential
+     * Manager (`CredentialSelectorActivity`, passkeys and passwords), and the captive-portal login.
+     */
     val ALLOWLIST_ESSENTIALS: Set<String> = setOf(
         "com.android.documentsui",
         "com.google.android.documentsui",
         "com.android.settings",
+        "com.android.intentresolver",
+        "com.google.android.providers.media.module",
+        "com.android.providers.media.module",
+        "com.google.android.photopicker",
+        "com.android.photopicker",
+        "com.android.credentialmanager",
+        "com.google.android.captiveportallogin",
+        "com.android.captiveportallogin",
     )
+
+    /**
+     * Allowlist essentials matched by component, for packages that are too broad to allow whole (Play Services):
+     * the Google account picker, Google sign-in and the passkey / FIDO and password-manager sheets (activity names
+     * from the API 37 image's GmsCore manifest).
+     */
+    val ALLOWLIST_ESSENTIAL_COMPONENTS: Set<String> = listOf(
+        "common.account.AccountPickerActivity",
+        "common.account.SimpleDialogAccountPickerActivity",
+        "common.account.AccountTypePickerActivity",
+        "auth.api.signin.internal.SignInHubActivity",
+        "auth.api.signin.ui.SignInActivity",
+        "signin.activity.SignInActivity",
+        "auth.api.credentials.assistedsignin.ui.AssistedSignInActivity",
+        "auth.api.credentials.assistedsignin.ui.GoogleSignInActivity",
+        "auth.api.credentials.authorization.ui.AuthorizationActivity",
+        "auth.api.credentials.credman.authentication.AuthenticationActivity",
+        "auth.api.credentials.credman.create.CreatePasswordActivity",
+        "auth.api.credentials.fido.authentication.ui.AuthenticationActivity",
+        "auth.api.credentials.fido.registration.ui.RegistrationActivity",
+        "fido.fido2.ui.Fido2FullScreenActivity",
+        "fido.fido2.ui.hybrid.HybridAuthenticateActivity",
+    ).mapTo(LinkedHashSet()) { "com.google.android.gms/com.google.android.gms.$it" }
 }

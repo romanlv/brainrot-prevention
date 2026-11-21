@@ -124,7 +124,11 @@ class Engine {
             val matched = HashSet<String>()
             val launch = HashSet<String>()
             for (app in foreground) {
-                if (DecisionMaker.isExempt(p, app) || !DecisionMaker.appListMatch(p, s, app.packageName, input.keyguardLocked)) continue
+                if (DecisionMaker.isExempt(p, app) ||
+                    !DecisionMaker.appListMatch(p, s, app.packageName, input.keyguardLocked, app.component)
+                ) {
+                    continue
+                }
                 matched += app.packageName
                 if (!app.secondary) launch += app.packageName
             }

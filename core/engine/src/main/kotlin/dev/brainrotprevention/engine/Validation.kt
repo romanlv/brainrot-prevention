@@ -25,6 +25,13 @@ object ScheduleValidator {
     const val RADIUS_MIN = 100
     const val RADIUS_MAX = 5000
     const val MAX_GEOFENCES = 100
+
+    /**
+     * Websites and keywords per schedule and in Quick Block (review round 2, adversarial 1): a 50 000-line hosts
+     * file would otherwise be parsed and laid out in the one process that also hosts the accessibility service.
+     */
+    const val MAX_WEB_RULES = 2_000
+    val TOO_MANY_RULES = "at most ${String.format(java.util.Locale.ROOT, "%,d", MAX_WEB_RULES)} websites and keywords per schedule"
     private val packageRegex = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
 
     fun isPackageName(s: String): Boolean = packageRegex.matches(s)
@@ -97,6 +104,7 @@ object ScheduleValidator {
 
     /** Rules must be in normalised form ([normalizeRule] returns them unchanged) and unique by (kind, value). */
     fun validateRules(rules: List<WebRule>, path: String): ValidationError? {
+        if (rules.size > MAX_WEB_RULES) return ValidationError(path, TOO_MANY_RULES)
         val seen = HashSet<Pair<Any, String>>()
         rules.forEachIndexed { i, r ->
             val n = normalizeRule(r) ?: return ValidationError("$path[$i]", "invalid ${r.kind.name.lowercase()} \"${r.value}\"")
@@ -154,10 +162,13 @@ object BackupValidator {
         else -> null
     }
 
-    private inline fun normalizeRules(rules: List<BackupWebRule>, path: String, fail: (ValidationError) -> Nothing): List<BackupWebRule> =
-        rules.mapIndexed { i, r ->
+    private inline fun normalizeRules(rules: List<BackupWebRule>, path: String, fail: (ValidationError) -> Nothing): List<BackupWebRule> {
+        // Checked before normalising: an oversized file is refused without parsing every rule.
+        if (rules.size > ScheduleValidator.MAX_WEB_RULES) fail(ValidationError(path, ScheduleValidator.TOO_MANY_RULES))
+        return rules.mapIndexed { i, r ->
             val n = ScheduleValidator.normalizeRule(WebRule(kind = r.kind, value = r.value, anywhereInUrl = r.anywhereInUrl))
                 ?: fail(ValidationError("$path[$i]", "invalid ${r.kind.name.lowercase()} \"${r.value}\""))
             BackupWebRule(n.kind, n.value, n.anywhereInUrl)
         }
+    }
 }

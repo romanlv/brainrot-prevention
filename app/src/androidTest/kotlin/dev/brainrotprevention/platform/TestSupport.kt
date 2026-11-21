@@ -10,7 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
  * obtained with FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES, or it suppresses our service itself (§14.4).
  */
 object ServiceRebind {
-    private fun shell(cmd: String): String {
+    fun shell(cmd: String): String {
         val pfd = InstrumentationRegistry.getInstrumentation()
             .getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).executeShellCommand(cmd)
         return android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).bufferedReader().use { it.readText() }

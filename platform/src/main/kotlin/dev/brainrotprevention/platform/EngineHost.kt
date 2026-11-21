@@ -378,12 +378,22 @@ class EngineHost internal constructor(private val app: Context, private val g: P
     fun notificationBlock(snapshot: ConfigSnapshot, r: EvaluationResult, pkg: String): dev.brainrotprevention.engine.Until? =
         engine.notificationBlock(snapshot, r.statuses, pkg)
 
-    /** Whether [pkg] is blocked by the last evaluation even when it isn't in front (media re-pause, §10.2). */
-    internal fun isBlockedInBackground(pkg: String): Boolean {
-        val r = lastResult ?: return false
-        val s = lastResultSnapshot ?: return false
-        if (r.apps[pkg]?.isBlock == true) return true
-        return engine.backgroundBlock(s, r.statuses, r.summary.strict, pkg).isBlock
+    /**
+     * Whether [pkg] is blocked by the last evaluation even when it isn't in front (media re-pause, §10.2). Called on
+     * the main thread (media callbacks), where an exception would kill the process and the service with it, so a
+     * failure counts as "blocked" (media stays paused) instead of throwing (review round 2, diff minor 2).
+     */
+    internal fun isBlockedInBackground(pkg: String): Boolean = try {
+        val r = lastResult
+        val s = lastResultSnapshot
+        when {
+            r == null || s == null -> false
+            r.apps[pkg]?.isBlock == true -> true
+            else -> engine.backgroundBlock(s, r.statuses, r.summary.strict, pkg).isBlock
+        }
+    } catch (e: Exception) {
+        Brp.event("error", "where" to "backgroundBlock", "msg" to e.toString())
+        true
     }
 
     /** Ids of the schedules hiding notifications in [r] (§10.4). */

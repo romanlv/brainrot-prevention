@@ -69,7 +69,8 @@ val r: EvaluationResult = engine.evaluate(EvaluationInput(
 - `engine.status(snapshot, clock, counters, sensors): StatusView(statuses, strict, nextInstant)` — no ledger tick (UI, editor,
   alarm receiver, boot).
 - `engine.notificationBlock(snapshot, statuses, pkg): Until?` — null ⇒ don't hide.
-- `engine.notificationHidingIds(snapshot, statuses): Set<Long>` — schedules hiding notifications (sweep when it changes).
+- `engine.notificationHidingIds(snapshot, statuses): Set<Long>` — schedules hiding notifications (sweep when it, or the
+  snapshot while it is non-empty, changes).
 - `engine.backgroundBlock(snapshot, statuses, strict, pkg): Decision` — the decision [pkg] would get in front (no LAUNCHES
   gate, no guards); media re-pause while the package stays blocked.
 
@@ -91,13 +92,15 @@ HOURLY_RESET, BEFORE_START, LIMIT_WARNING. Schedule with `setExactAndAllowWhileI
 - `UsageLedger.step(LedgerState, LedgerInput): LedgerOutput(state, events, countersToSave)`; `UsageLedger.read(counter, limit, now,
   zone, dayStartHour)` (reset-on-read).
 - `DecisionMaker.decideApp(DecisionContext, ForegroundApp)`, `decideWeb(ctx, WebTarget)`, `isExempt`.
-- `UrlNormalizer.normalizeDetected(text): NormalizedUrl(text, scheme, hostAscii, hostUnicode, urlDecoded){hasHost,itemKey}`;
+- `UrlNormalizer.normalizeDetected(text): NormalizedUrl(text, scheme, hostAscii, hostUnicode, urlDecoded, proxiedHosts)
+  {hasHost,itemKey,matchHosts}` (`proxiedHosts`: original host of translate.goog / AMP URLs; host rules match them too);
   `UrlMatcher.matches(rule, url)`, `matchesAny`.
 
 ## Editor / UI
 - Rule input: `UrlNormalizer.normalizeRuleInput(kind, input, anywhereInUrl)` → `RuleInput.Ok(rule) | Choice(domain, keyword)`
   (URL with a path: offer "Block the whole site" vs "pages containing this text") `| Invalid(reason)`;
-  `UrlNormalizer.suggest(input)`; `UrlNormalizer.bulkAdd(text, existing): BulkAddResult(added, duplicates, invalid)`.
+  `UrlNormalizer.suggest(input)`; `UrlNormalizer.bulkAdd(text, existing, max = MAX_WEB_RULES): BulkAddResult(added,
+  duplicates, invalid, overLimit)`. `ScheduleValidator.MAX_WEB_RULES` = 2 000 per schedule / Quick Block.
 - Validation: `ScheduleValidator.validate(schedule): ValidationError(path, message)?` (§4.1 ranges, no limits in ALLOWLIST,
   ALLOWLIST not strictFollowed, rules normalised & unique); `validateApps`, `validateRules`, `normalizeRule`.
 - Import: `EditGuard.checkImport(strictRow)` first (refused while ON), then `BackupValidator.validateText(json)` →
@@ -112,15 +115,18 @@ HOURLY_RESET, BEFORE_START, LIMIT_WARNING. Schedule with `setExactAndAllowWhileI
 
 ## Strict Mode (`StrictPolicy`)
 - `checkActivation(StrictActivation(method, options, durationMs?, pin?, cooldownMin?, followAllSchedules), StrictFacts(
-  accessibilityConnected, usageAccessGranted, inAccessibilityShortcut, adminActive), schedules, currentRow): ActivationRefusal?`
+  accessibilityConnected, usageAccessGranted, inAccessibilityShortcut, adminActive), schedules, currentRow, quickBlock):
+  ActivationRefusal?` — pass the Quick Block: SCHEDULES + LOCK_EDITING is refused (`UNBOUNDED_FOLLOWED`) while a followed
+  item is unbounded (`isUnbounded(schedule|quickBlock)`, `unboundedFollowed`); while ON, `EditGuard.checkSchedule` /
+  `checkQuickBlock` refuse starting one (`Refusal.UNBOUNDED_UNDER_STRICT`).
 - `activate(req, facts, schedules, currentRow, wallNow, elapsedNow): ActivationResult.Activated(row) | Refused(reason)`.
 - `followed(row, schedules): FollowedSet`, `notCovered(schedules)` (ALLOWLIST ids), `pausedOrOff(schedules, now)`,
   `displayState(row, schedules, statusesById)`.
 - Tamper (§9.6): call `check(row, emergencyLog, wallNow, elapsedNow, bootCount = Settings.Global.BOOT_COUNT): TamperCheck(row,
   emergencyLog, changed, skewApplied, bootDetected)` on TIME_SET, TIMEZONE_CHANGED, every minute, ACTION_SHUTDOWN and after boot
   (reboot = boot count changed or elapsed went back; skew ≤ 60 s is carried, not dropped) — **persist row and log**. Runs while
-  INACTIVE too. `timerExpired`, `timerRemaining`, `canExtendTimer(row, extraMs)`, `extendTimer(row, extraMs)` (requires
-  `canExtendTimer`).
+  INACTIVE too. `timerExpired`, `timerRemaining`, `canExtendTimer(row, extraMs)`, `extensionWithinMax(row, extraMs, wallNow)`
+  (end ≤ now + 30 days), `extendTimer(row, extraMs)` (requires `canExtendTimer`).
 - Unlock → `UnlockResult.Unlocked(row) | WrongPin(row, lockedUntil?) | Refused(UnlockRefusal, remainingMs?)`:
   `unlockWithCharger(row, plugged)`, `unlockWithPin(row, pin, wall, elapsed)` (PBKDF2-SHA256 120k; 5 failures → 5 min, doubling to
   1 h; persist the returned row), `unlockAfterCooldown(row, startedElapsed, nowElapsed)`, `turnOffFromStandby(row, display,

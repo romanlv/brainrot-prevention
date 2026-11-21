@@ -21,6 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -42,18 +43,23 @@ import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.depsViewModelWithState
 import dev.brainrotprevention.ui.platform.UiApp
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+@OptIn(FlowPreview::class)
 class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState: SavedStateHandle = SavedStateHandle()) : ViewModel() {
     private val _draft = MutableStateFlow<QuickBlock?>(savedState.getJson(KEY_DRAFT))
     val draft: StateFlow<QuickBlock?> = _draft.asStateFlow()
     private var initial: QuickBlock? = savedState.getJson<QuickBlock>(KEY_INITIAL)
-    private val _webInput = MutableStateFlow(savedState.getJson<WebInput>(KEY_WEB) ?: WebInput())
-    val webInput: StateFlow<WebInput> = _webInput.asStateFlow()
+
+    /** Snapshot state written synchronously (see `EditorViewModel.webInput`). */
+    private val _webInput = mutableStateOf(savedState.getJson<WebInput>(KEY_WEB) ?: WebInput())
+    val webInput: State<WebInput> get() = _webInput
     private val _apps = MutableStateFlow<List<UiApp>?>(null)
     val apps: StateFlow<List<UiApp>?> = _apps.asStateFlow()
     private val _notice = MutableStateFlow<Notice?>(null)
@@ -72,8 +78,7 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
                 _draft.value = q
             }
         }
-        viewModelScope.launch { _draft.collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
-        viewModelScope.launch { _webInput.collect { savedState.setJson(KEY_WEB, it) } }
+        viewModelScope.launch { _draft.debounce(250).collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
         viewModelScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
     }
 
@@ -81,6 +86,7 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
 
     fun setWebInput(input: WebInput) {
         _webInput.value = input
+        savedState.setJson(KEY_WEB, input)
     }
 
     fun label(pkg: String) = _apps.value?.firstOrNull { it.packageName == pkg }?.label ?: deps.appLabel(pkg)
@@ -112,7 +118,7 @@ class QuickBlockEditorViewModel(private val deps: UiDeps, private val savedState
             is PendingWeb.Ready -> if (p.consumedInput) {
                 d = d.copy(webRules = p.rules)
                 _draft.value = d
-                _webInput.update { it.copy(text = "") }
+                setWebInput(_webInput.value.copy(text = ""))
             }
         }
         _saving.value = true
@@ -149,7 +155,7 @@ fun QuickBlockEditorScreen(deps: UiDeps, onDone: () -> Unit) {
     val notice by vm.notice.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
-    val webInput by vm.webInput.collectAsStateWithLifecycle()
+    val webInput by vm.webInput
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(saved) { if (saved) onDone() }
     val back: () -> Unit = {

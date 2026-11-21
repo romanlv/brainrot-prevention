@@ -192,8 +192,11 @@ fun StartNowSheet(name: String, onPick: (Int?) -> Unit, onDismiss: () -> Unit, a
 }
 
 /** The extra line on the Start now sheet when starting also turns the schedule on or ends its pause. */
-fun startNowAlsoArms(s: Schedule, now: Long): String? = when {
-    !s.enabled -> "${s.name} is off. Starting it also turns it on."
+fun startNowAlsoArms(s: Schedule, now: Long, strictLocksEditing: Boolean = false): String? = when {
+    // Turning it on lasts beyond the Start now period (review round 2, diff minor 6).
+    !s.enabled && strictLocksEditing ->
+        "${s.name} is off. Starting it also turns it on, and it stays on: you can't turn it off while Strict Mode locks editing."
+    !s.enabled -> "${s.name} is off. Starting it also turns it on, and it stays on."
     ScheduleEvaluator.isPaused(s, now) -> "${s.name} is paused. Starting it also ends the pause."
     else -> null
 }

@@ -163,8 +163,18 @@ class PackageFacts internal constructor(private val app: Context, private val g:
 
     private fun essentials(): Set<String> {
         val out = LinkedHashSet<String>()
-        pm.resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName?.let {
-            if (it != "android") out += it
+        // Clock (§6.3), and the system screens other apps open on Android 14+ (share sheet, photo picker, captive
+        // portal login; review round 2, adversarial 8), whatever package they live in on this device.
+        val intents = listOf(
+            Intent(AlarmClock.ACTION_SHOW_ALARMS),
+            Intent(Intent.ACTION_CHOOSER),
+            Intent("android.provider.action.PICK_IMAGES"),
+            Intent("android.net.conn.CAPTIVE_PORTAL"),
+        )
+        for (i in intents) {
+            runCatching { pm.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.getOrNull()?.let {
+                if (it != "android") out += it
+            }
         }
         return out
     }

@@ -238,6 +238,9 @@ object Format {
         Refusal.STRICT_CHANGED -> "Strict Mode settings can't be changed while it is on."
         Refusal.SETTING_LOCKED -> "This setting can't be changed."
         Refusal.IMPORT_LOCKED -> "Backups can't be imported."
+        Refusal.UNBOUNDED_UNDER_STRICT ->
+            "Strict Mode follows this, and it would block with no end (no timer, \"until I stop it\" or always on), " +
+                "so Strict Mode could never be turned off. Pick an end time."
     }
 
     fun activationRefusal(r: ActivationRefusal): String = when (r) {
@@ -251,6 +254,9 @@ object Format {
         ActivationRefusal.INVALID_PIN -> "The PIN must be 4 to 8 digits."
         ActivationRefusal.INVALID_COOLDOWN -> "Pick a cooldown of 5, 10, 15 or 30 minutes."
         ActivationRefusal.FOLLOWED_SET_EMPTY -> "Choose at least one blocklist schedule to follow."
+        ActivationRefusal.UNBOUNDED_FOLLOWED ->
+            "A followed schedule or Quick Block blocks with no end (no timer, \"until I stop it\" or always on). " +
+                "Strict Mode would never reach standby and couldn't be turned off. Stop it or give it an end first."
     }
 
     fun unlockRefusal(r: UnlockRefusal?, remainingMs: Long?): String = when (r) {

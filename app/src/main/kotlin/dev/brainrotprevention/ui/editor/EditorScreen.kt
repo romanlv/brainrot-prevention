@@ -257,7 +257,7 @@ fun TemplateList(onPick: (Template?) -> Unit) {
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun EditorBody(deps: UiDeps, vm: EditorViewModel, s: Schedule, saving: Boolean, modifier: Modifier) {
-    val webInput by vm.webInput.collectAsStateWithLifecycle()
+    val webInput by vm.webInput
     val apps by vm.apps.collectAsStateWithLifecycle()
     val essentials by vm.essentials.collectAsStateWithLifecycle()
     val strictRow by deps.graph.strict.strict.collectAsStateWithLifecycle(StrictModeRow())

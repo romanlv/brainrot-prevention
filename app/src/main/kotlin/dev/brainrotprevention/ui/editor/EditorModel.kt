@@ -117,10 +117,31 @@ object EditorOps {
         return (rules + r.added) to r
     }
 
+    /** [current] plus the [added] rules it doesn't have yet, capped at the per-schedule maximum. */
+    fun mergeAdded(current: List<WebRule>, added: List<WebRule>): List<WebRule> {
+        val have = current.mapTo(HashSet()) { it.kind to it.value }
+        return (current + added.filter { (it.kind to it.value) !in have }).take(maxOf(current.size, ScheduleValidator.MAX_WEB_RULES))
+    }
+
     fun bulkSummary(r: BulkAddResult): String {
         val dup = if (r.duplicates == 1) "1 duplicate" else "${r.duplicates} duplicates"
-        return "Added ${r.added.size} · $dup · ${r.invalid} invalid"
+        val base = "Added ${r.added.size} · $dup · ${r.invalid} invalid"
+        return if (r.overLimit > 0) "$base. ${r.overLimit} not added: $LIMIT_TEXT." else base
     }
+
+    /** The per-schedule cap (review round 2, adversarial 1), as shown in the editor. */
+    val LIMIT_TEXT = "a schedule can have at most ${"%,d".format(
+        java.util.Locale.ROOT,
+        ScheduleValidator.MAX_WEB_RULES
+    )} websites and keywords"
+
+    fun atLimit(rules: List<WebRule>): Boolean = rules.size >= ScheduleValidator.MAX_WEB_RULES
+
+    /** Bulk paste text kept in the dialog (and its saved state); longer pastes are cut here. */
+    const val MAX_PASTE_CHARS = 64_000
+
+    /** Rule rows shown before "Show more" (the editor column isn't lazy). */
+    const val RULES_PAGE = 50
 
     fun setMode(s: Schedule, mode: Mode): Schedule = if (mode == Mode.ALLOWLIST) {
         // §5.4: no limits in ALLOWLIST; §6.3: ALLOWLIST can't be followed by Strict Mode SCHEDULES.

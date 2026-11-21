@@ -8,6 +8,7 @@ import dev.brainrotprevention.model.StrictMethod
 import dev.brainrotprevention.model.StrictModeRow
 import dev.brainrotprevention.model.StrictOptions
 import dev.brainrotprevention.model.StrictState
+import dev.brainrotprevention.model.Weekdays
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,7 +18,9 @@ import org.junit.Test
 class StrictPolicyTest {
     private val facts =
         StrictFacts(accessibilityConnected = true, usageAccessGranted = true, inAccessibilityShortcut = false, adminActive = true)
-    private val bl = Schedule(id = 1, name = "a", strictFollowed = true)
+
+    // A bounded (workday) schedule: an always-on one is refused under SCHEDULES + LOCK_EDITING (round 2, adversarial 7).
+    private val bl = Schedule(id = 1, name = "a", strictFollowed = true, timeWindows = listOf(win(Weekdays.ALL, "09:00", "17:00")))
     private val al = Schedule(id = 2, name = "b", mode = Mode.ALLOWLIST)
     private val wall0 = at("2026-11-23T10:00")
     private val el0 = 10_000_000L

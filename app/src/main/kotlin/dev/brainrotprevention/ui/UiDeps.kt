@@ -13,6 +13,7 @@ import dev.brainrotprevention.engine.Engine
 import dev.brainrotprevention.engine.StatusView
 import dev.brainrotprevention.model.PolicyClock
 import dev.brainrotprevention.ui.platform.UiPlatform
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +37,7 @@ class UiDeps(val graph: DataGraph, val platform: UiPlatform, val tickMs: Long = 
 
     /** An app's label, cached so PackageManager is asked at most once per package (callers are on the main thread). */
     fun appLabel(pkg: String): String = labels.getOrPut(pkg) { runCatching { platform.apps.label(pkg) }.getOrDefault(pkg) }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, _ -> })
 
     /** Runs [block] outside any screen's lifetime (a write that must finish after its ViewModel is cleared). */
     fun launchDetached(block: suspend () -> Unit) {
@@ -61,9 +62,11 @@ class UiDeps(val graph: DataGraph, val platform: UiPlatform, val tickMs: Long = 
             if (graph.snapshots.snapshot.value == null) graph.snapshots.current()
             emitAll(graph.snapshots.snapshot.filterNotNull())
         }
+        // A throwing evaluation skips one tick instead of reaching the uncaught-exception handler, which would kill
+        // the process and the accessibility service with it (review round 2, diff minor 2).
         combine(snapshots, graph.counters.counters, ticker()) { snap, counters, _ ->
-            engine.status(snap, clock.read(), counters, platform.engine.sensors())
-        }.flowOn(Dispatchers.Default)
+            runCatching { engine.status(snap, clock.read(), counters, platform.engine.sensors()) }.getOrNull()
+        }.filterNotNull().flowOn(Dispatchers.Default)
             // One upstream: the Engine instance (and its per-snapshot cache) is used from one coroutine at a time.
             .shareIn(scope, SharingStarted.WhileSubscribed(5_000), replay = 1)
     }

@@ -18,8 +18,17 @@ data class NormalizedUrl(
     val hostAscii: String,
     val hostUnicode: String,
     val urlDecoded: String,
+    /**
+     * Hosts of the page this URL proxies (ASCII): Google Translate's `*.translate.goog`, the AMP cache
+     * (`*.cdn.ampproject.org`, `cdn.ampproject.org/c/s/<host>/…`) and Google's AMP viewer (`www.google.com/amp/s/<host>/…`, any google TLD).
+     * Host rules match these too (review round 2, adversarial 4).
+     */
+    val proxiedHosts: List<String> = emptyList(),
 ) {
     val hasHost: Boolean get() = hostAscii.isNotEmpty()
+
+    /** [hostAscii] plus [proxiedHosts]. */
+    val matchHosts: List<String> get() = if (proxiedHosts.isEmpty()) listOf(hostAscii) else listOf(hostAscii) + proxiedHosts
 
     /** Launch-counting item key (§5.4): hostAscii without a leading `www.`. */
     val itemKey: String get() = hostAscii.removePrefix("www.")
@@ -36,7 +45,13 @@ sealed interface RuleInput {
 }
 
 /** Bulk add result (§7.3). */
-data class BulkAddResult(val added: List<WebRule>, val duplicates: Int, val invalid: Int)
+data class BulkAddResult(
+    val added: List<WebRule>,
+    val duplicates: Int,
+    val invalid: Int,
+    /** Entries not added because the list reached [ScheduleValidator.MAX_WEB_RULES] (not parsed). */
+    val overLimit: Int = 0,
+)
 
 object UrlNormalizer {
     private const val SAMSUNG_REFER = "r.internet.apps.samsung.com/refer"
@@ -77,7 +92,61 @@ object UrlNormalizer {
         val withScheme = if (schemeOf(text) == null) "https://$text" else text
         val host = if (scheme == "http" || scheme == "https") parseHost(withScheme.substringAfter(':')) else ""
         val ascii = toAscii(host)
-        return NormalizedUrl(text, scheme, ascii, toUnicode(ascii), lowerNfc(percentDecode(text)))
+        val proxied = if (ascii.isEmpty()) emptyList() else proxiedHosts(ascii, withScheme.substringAfter(':').removePrefix("//"))
+        return NormalizedUrl(text, scheme, ascii, toUnicode(ascii), lowerNfc(percentDecode(text)), proxied)
+    }
+
+    private const val TRANSLATE_SUFFIX = ".translate.goog"
+    private const val AMP_CACHE = "cdn.ampproject.org"
+    private val googleHost = Regex("^(www\\.)?google(\\.[a-z]{2,3}){1,2}$")
+
+    /**
+     * The original host behind a proxy URL (see [NormalizedUrl.proxiedHosts]). [rest] is the text after `scheme://`.
+     * The translate.goog and AMP-cache subdomain encodes the host with `-` for `.` and `--` for `-`.
+     */
+    internal fun proxiedHosts(host: String, rest: String): List<String> {
+        val out = ArrayList<String>(1)
+        val label = when {
+            host.endsWith(TRANSLATE_SUFFIX) -> host.removeSuffix(TRANSLATE_SUFFIX)
+            host.endsWith(".$AMP_CACHE") -> host.removeSuffix(".$AMP_CACHE")
+            else -> null
+        }
+        if (label != null && '.' !in label && label.isNotEmpty()) decodeProxyLabel(label)?.let { out += it }
+        val path = rest.substringAfter('/', "").substringBefore('?').substringBefore('#')
+        val segments = path.split('/')
+        val viaPath = when {
+            // cdn.ampproject.org/c/s/www.example.com/… (also /v/ viewer and /i/ image paths); `s/` = https
+            host == AMP_CACHE || host.endsWith(".$AMP_CACHE") ->
+                if (segments.size >= 2 && segments[0] in setOf("c", "v", "i")) segments.drop(1) else null
+            // www.google.com/amp/s/www.example.com/…
+            googleHost.matches(host) -> if (segments.size >= 2 && segments[0] == "amp") segments.drop(1) else null
+            else -> null
+        }
+        if (viaPath != null) {
+            val h = (if (viaPath.firstOrNull() == "s") viaPath.drop(1) else viaPath).firstOrNull()
+            if (h != null && '.' in h) {
+                val ascii = toAscii(parseHost(h))
+                if (ascii.isNotEmpty() && domainChars.matches(ascii)) out += ascii
+            }
+        }
+        return out
+    }
+
+    private fun decodeProxyLabel(label: String): String? {
+        val sb = StringBuilder(label.length)
+        var i = 0
+        while (i < label.length) {
+            val c = label[i]
+            if (c == '-' && i + 1 < label.length && label[i + 1] == '-') {
+                sb.append('-')
+                i += 2
+            } else {
+                sb.append(if (c == '-') '.' else c)
+                i++
+            }
+        }
+        val h = sb.toString().trim('.')
+        return h.takeIf { '.' in it && domainChars.matches(it) }
     }
 
     /** NFC then lower-case (also after percent-decoding, which can produce upper-case or decomposed text). */
@@ -197,14 +266,19 @@ object UrlNormalizer {
     }
 
     /** Bulk add (§7.3): one rule per line; CSV lines use the first column. Choices resolve to DOMAIN. */
-    fun bulkAdd(text: String, existing: Collection<WebRule>): BulkAddResult {
+    fun bulkAdd(text: String, existing: Collection<WebRule>, max: Int = ScheduleValidator.MAX_WEB_RULES): BulkAddResult {
         val seen = existing.map { it.kind to it.value }.toMutableSet()
         val added = ArrayList<WebRule>()
         var dup = 0
         var invalid = 0
-        for (line in text.lines()) {
+        var over = 0
+        for (line in text.lineSequence()) {
             val entry = line.substringBefore(',').trim().trim('"')
             if (entry.isEmpty()) continue
+            if (existing.size + added.size >= max) {
+                over++
+                continue
+            }
             val rule = when (val r = suggest(entry)) {
                 is RuleInput.Ok -> r.rule
                 is RuleInput.Choice -> r.domain
@@ -216,6 +290,6 @@ object UrlNormalizer {
                 else -> added += rule
             }
         }
-        return BulkAddResult(added, dup, invalid)
+        return BulkAddResult(added, dup, invalid, over)
     }
 }

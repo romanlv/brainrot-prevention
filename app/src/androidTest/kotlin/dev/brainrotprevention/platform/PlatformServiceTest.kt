@@ -113,6 +113,29 @@ class PlatformServiceTest {
         assertTrue(page.target.reliable)
     }
 
+    /**
+     * Review round 2, adversarial 4: a Google Translate proxy URL read from a real URL bar maps back to the original
+     * host, so a DOMAIN rule for it matches. (No blocking rule is active, so the enforcer doesn't redirect the page
+     * before the read is inspected.)
+     */
+    @Test
+    @Milestone("M6")
+    fun translateProxyUrlMatchesTheOriginalDomain() {
+        start(BROWSER, "$BROWSER.MainActivity") { putExtra("go", "https://old-reddit-com.translate.goog/r/all?_x_tr_sl=auto") }
+        val ok = waitFor(8_000) {
+            runBlocking { g.engineHost.evaluateNow("test") }
+            g.engineHost.lastResult?.pages?.any {
+                it.target.browserPackage == BROWSER && it.url.hostAscii == "old-reddit-com.translate.goog"
+            } ==
+                true
+        }
+        assertTrue("the translate.goog URL was not read", ok)
+        val page = g.engineHost.lastResult!!.pages.first { it.target.browserPackage == BROWSER }
+        assertEquals(listOf("old.reddit.com"), page.url.proxiedHosts)
+        val rule = dev.brainrotprevention.model.WebRule(kind = dev.brainrotprevention.model.WebRuleKind.DOMAIN, value = "reddit.com")
+        assertTrue(dev.brainrotprevention.engine.UrlMatcher.matches(rule, page.url))
+    }
+
     private companion object {
         const val TARGET = "dev.brainrotprevention.fixture.target"
         const val BROWSER = "dev.brainrotprevention.fixture.browser"

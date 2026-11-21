@@ -31,7 +31,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,7 +52,9 @@ import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.debugRoot
 import dev.brainrotprevention.ui.common.readText
 import dev.brainrotprevention.ui.format.Format
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Websites and keywords (§7.3, §12): typed input (hoisted: [input], so Save can add what was typed) with a live preview, a domain-vs-keyword choice for URLs with a
@@ -75,6 +79,10 @@ fun WebRulesEditor(
     val scope = rememberCoroutineScope()
 
     fun add(rule: WebRule) {
+        if (EditorOps.atLimit(rules)) {
+            message = "Not added: ${EditorOps.LIMIT_TEXT}."
+            return
+        }
         val next = EditorOps.addRule(rules, rule)
         if (next == null) {
             message = "${rule.value} is already in the list."
@@ -85,10 +93,26 @@ fun WebRulesEditor(
         }
     }
 
+    var parsing by remember { mutableStateOf(false) }
+    val currentRules by rememberUpdatedState(rules)
+    val currentOnChange by rememberUpdatedState(onChange)
+
+    // Parsing a long list (IDN, NFC per line) runs off the main thread; the result is applied on it (adversarial 1).
     fun bulk(input: String) {
-        val (next, r) = EditorOps.bulk(rules, input)
-        onChange(next)
-        message = EditorOps.bulkSummary(r)
+        val before = rules
+        parsing = true
+        scope.launch {
+            try {
+                val (_, r) = withContext(Dispatchers.Default) { EditorOps.bulk(before, input) }
+                // Merged into the list as it is now (it may have changed while parsing).
+                currentOnChange(EditorOps.mergeAdded(currentRules, r.added))
+                message = EditorOps.bulkSummary(r)
+            } catch (e: Exception) {
+                message = "Couldn't read that list."
+            } finally {
+                parsing = false
+            }
+        }
     }
 
     val csv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -99,6 +123,7 @@ fun WebRulesEditor(
             }
         }
     }
+    var shown by rememberSaveable { mutableStateOf(EditorOps.RULES_PAGE) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -203,7 +228,15 @@ fun WebRulesEditor(
                     .semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
-        rules.forEach { r ->
+        if (rules.size > EditorOps.RULES_PAGE) {
+            Text(
+                "${rules.size} websites and keywords",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.testTag("web_rule_count"),
+            )
+        }
+        // Not lazy (the editor is one scrolling column), so only a page of rows is composed at a time.
+        rules.take(shown).forEach { r ->
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -224,15 +257,26 @@ fun WebRulesEditor(
                 }
             }
         }
+        if (rules.size > shown) {
+            TextButton(
+                onClick = { shown += 4 * EditorOps.RULES_PAGE },
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("web_show_more"),
+            ) { Text("Show more (${rules.size - shown} hidden)") }
+        }
+        if (parsing) Text("Adding…", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("web_parsing"))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { bulkOpen = true },
+                enabled = !parsing,
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .testTag("web_bulk_paste")
             ) { Text("Paste a list") }
             OutlinedButton(
                 onClick = { csv.launch(arrayOf("text/*", "text/csv", "text/comma-separated-values", "application/csv")) },
+                enabled = !parsing,
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .testTag("web_import_csv"),
@@ -249,7 +293,10 @@ fun WebRulesEditor(
 
 @Composable
 private fun BulkPasteDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    // Capped (here and so in the saved state): a pasted hosts file of several hundred KB would exceed the Binder
+    // limit in onSaveInstanceState and crash the process (review round 2, adversarial 1).
     var text by rememberSaveable { mutableStateOf("") }
+    var cut by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier
@@ -264,13 +311,25 @@ private fun BulkPasteDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 )
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = {
+                        cut = it.length > EditorOps.MAX_PASTE_CHARS
+                        text = if (cut) it.take(EditorOps.MAX_PASTE_CHARS) else it
+                    },
                     minLines = 5,
+                    maxLines = 10,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp)
                         .testTag("bulk_input"),
                 )
+                if (cut) {
+                    Text(
+                        "That list is too long to paste; only the start was kept. Use Import CSV for long lists.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("bulk_cut"),
+                    )
+                }
             }
         },
         confirmButton = { TextButton(onClick = { onAdd(text) }, modifier = Modifier.testTag("bulk_add")) { Text("Add all") } },

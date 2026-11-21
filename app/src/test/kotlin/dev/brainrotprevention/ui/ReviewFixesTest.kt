@@ -97,7 +97,12 @@ class ReviewFixesTest {
     @Test fun startNowSheetSaysWhenItAlsoArms() {
         val s = Schedule(id = 1, name = "Focus")
         assertNull(startNowAlsoArms(s, t0))
-        assertEquals("Focus is off. Starting it also turns it on.", startNowAlsoArms(s.copy(enabled = false), t0))
+        assertEquals("Focus is off. Starting it also turns it on, and it stays on.", startNowAlsoArms(s.copy(enabled = false), t0))
+        // Round 2, diff minor 6: under Strict LOCK_EDITING it also says it can't be turned off.
+        assertEquals(
+            "Focus is off. Starting it also turns it on, and it stays on: you can't turn it off while Strict Mode locks editing.",
+            startNowAlsoArms(s.copy(enabled = false), t0, strictLocksEditing = true),
+        )
         assertEquals("Focus is paused. Starting it also ends the pause.", startNowAlsoArms(s.copy(pausedUntil = t0 + 60_000), t0))
         assertNull(startNowAlsoArms(s.copy(pausedUntil = t0 - 1), t0))
     }

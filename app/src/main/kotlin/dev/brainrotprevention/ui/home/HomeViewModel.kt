@@ -16,12 +16,18 @@ import dev.brainrotprevention.ui.UiDeps
 import dev.brainrotprevention.ui.common.Notice
 import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.format.Format
+import dev.brainrotprevention.ui.platform.FixResult
+import dev.brainrotprevention.ui.platform.UiGrant
+import dev.brainrotprevention.ui.platform.UiHealth
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -35,7 +41,18 @@ data class HomeState(
     val strict: StrictDisplayState = StrictDisplayState.INACTIVE,
     val now: Long = 0,
     val zone: ZoneId = ZoneId.systemDefault(),
+    /** Permission health; the statuses above are the UI's own computation and don't know whether the service runs. */
+    val health: UiHealth = UiHealth(),
 ) {
+    /**
+     * Nothing is enforced: the accessibility service isn't connected or a required grant is missing (review round 2,
+     * adversarial 6). Home then shows "Blocking is off" instead of "Blocking now".
+     */
+    val blockingOff: Boolean get() = health.items.isNotEmpty() && !health.ok
+
+    /** The first missing required grant (the banner's Fix button). */
+    val missingGrant: UiGrant? get() = health.items.firstOrNull { it.required && !it.granted }?.grant
+
     val qbStatus: ScheduleStatus? get() = statuses[QUICK_BLOCK_ID]
 
     /** "Blocking now: Focus, Social cap" or "Nothing blocking · next: Focus at 09:00" (§12). */
@@ -51,7 +68,9 @@ data class HomeState(
                     }
                 }
             }
-            if (names.isNotEmpty()) return "Blocking now: " + names.joinToString(", ")
+            if (names.isNotEmpty()) {
+                return (if (blockingOff) "Would be blocking now: " else "Blocking now: ") + names.joinToString(", ")
+            }
             val next = schedules
                 .filter { it.enabled && !ScheduleEvaluator.isPaused(it, now) && it.timeWindows.isNotEmpty() }
                 .mapNotNull { s -> ScheduleEvaluator.nextWindowStart(s, now, zone)?.let { s to it } }
@@ -66,6 +85,9 @@ data class HomeState(
         }
 
     val anyBlocking: Boolean get() = headline.startsWith("Blocking")
+
+    /** Something should be blocking, but blocking is off. */
+    val wouldBlock: Boolean get() = headline.startsWith("Would be blocking")
 }
 
 class HomeViewModel(private val deps: UiDeps) : ViewModel() {
@@ -93,7 +115,24 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
             now = c.now,
             zone = c.zone,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeState())
+    }.combine(
+        deps.ticker(HEALTH_POLL_MS).map { runCatching { deps.platform.health.check() }.getOrDefault(UiHealth()) }
+            .distinctUntilChanged()
+            .flowOn(kotlinx.coroutines.Dispatchers.IO),
+    ) { st, h -> st.copy(health = h) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeState())
+
+    /** Opens the fix screen for the banner's missing grant ("Locked by Strict Mode" when the Settings guard is on). */
+    fun fixBlocking(activity: android.app.Activity) {
+        val grant = state.value.missingGrant ?: return
+        val r = runCatching { deps.platform.health.open(activity, grant) }.getOrDefault(FixResult.UNAVAILABLE)
+        if (r ==
+            FixResult.LOCKED_BY_STRICT
+        ) {
+            _notice.value =
+                Notice.Message("Locked by Strict Mode", "Settings can't be opened while Strict Mode blocks them.")
+        }
+    }
 
     init {
         viewModelScope.launch { g.snapshots.current() }
@@ -114,6 +153,13 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
      */
     fun showLocked(refusal: dev.brainrotprevention.engine.Refusal) {
         _notice.value = Notice.Locked(refusal)
+    }
+
+    /** Strict Mode is on with LOCK_EDITING (turning a schedule off would be refused while it blocks). */
+    fun strictLocksEditing(): Boolean {
+        val row = g.snapshots.snapshot.value?.strict ?: return false
+        return row.isOn &&
+            dev.brainrotprevention.model.StrictOptions.has(row.options, dev.brainrotprevention.model.StrictOptions.LOCK_EDITING)
     }
 
     fun dismissNotice() {
@@ -196,6 +242,8 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
     fun stopQuickBlock() = run { g.quickBlock.stop() }
 
     companion object {
+        private const val HEALTH_POLL_MS = 2_000L
+
         /** A copy with fresh ids, not paused/started, at the end of the list, named "‹name› copy". */
         fun duplicateOf(s: Schedule, all: List<Schedule>): Schedule {
             val base = "${s.name} copy".take(40)

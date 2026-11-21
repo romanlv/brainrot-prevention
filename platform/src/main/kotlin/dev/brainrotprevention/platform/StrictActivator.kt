@@ -63,8 +63,7 @@ class StrictActivator internal constructor(private val app: Context, private val
 
     fun inAccessibilityShortcut(): Boolean {
         val me = ComponentName(app, BlockerAccessibilityService::class.java)
-        val keys = listOf("accessibility_shortcut_target_service", "accessibility_button_targets", "accessibility_qs_targets")
-        return keys.any { k ->
+        return SHORTCUT_KEYS.any { k ->
             val v = Settings.Secure.getString(app.contentResolver, k) ?: return@any false
             v.split(':').any { s ->
                 val c = ComponentName.unflattenFromString(s.trim())
@@ -81,7 +80,7 @@ class StrictActivator internal constructor(private val app: Context, private val
     )
 
     suspend fun preflight(req: StrictActivation): ActivationRefusal? =
-        StrictPolicy.checkActivation(req, facts(), g.data.schedules.getAll(), g.data.strict.get())
+        StrictPolicy.checkActivation(req, facts(), g.data.schedules.getAll(), g.data.strict.get(), g.data.quickBlock.get())
 
     /**
      * The normal activation path. [launchAdmin] false (debug `strict-start`) refuses instead of asking for the
@@ -110,14 +109,25 @@ class StrictActivator internal constructor(private val app: Context, private val
         val facts = facts()
         val schedules = g.data.schedules.getAll()
         val current = g.data.strict.get()
+        val quickBlock = g.data.quickBlock.get()
         if (launchAdmin && StrictOptions.has(req.options, StrictOptions.BLOCK_UNINSTALL) && !facts.adminActive) {
-            val pre = StrictPolicy.checkActivation(req, facts.copy(adminActive = true), schedules, current)
+            val pre = StrictPolicy.checkActivation(req, facts.copy(adminActive = true), schedules, current, quickBlock)
             if (pre != null) return ActivationOutcome.Refused(pre, message(pre))
             return ActivationOutcome.NeedsDeviceAdmin(deviceAdminIntent())
         }
         val outcome = g.engineHost.confined {
             val clock = g.clock.read()
-            when (val r = StrictPolicy.activate(req, facts, schedules, g.data.strict.get(), clock.now, clock.elapsed)) {
+            when (
+                val r = StrictPolicy.activate(
+                    req,
+                    facts,
+                    schedules,
+                    g.data.strict.get(),
+                    clock.now,
+                    clock.elapsed,
+                    quickBlock = quickBlock
+                )
+            ) {
                 is ActivationResult.Refused -> ActivationOutcome.Refused(r.reason, message(r.reason))
                 is ActivationResult.Activated -> {
                     g.data.strict.writePolicyResult(r.row)
@@ -254,9 +264,28 @@ class StrictActivator internal constructor(private val app: Context, private val
         ActivationRefusal.INVALID_PIN -> "The PIN must be 4–8 digits."
         ActivationRefusal.INVALID_COOLDOWN -> "Choose a cooldown of 5, 10, 15 or 30 minutes."
         ActivationRefusal.FOLLOWED_SET_EMPTY -> "Choose at least one schedule to follow."
+        ActivationRefusal.UNBOUNDED_FOLLOWED -> UNBOUNDED_MESSAGE
     }
 
     companion object {
+        /**
+         * Every `Settings.Secure` key that assigns an accessibility service to a shortcut (§9.2). Checked on the
+         * API 37 image (framework.jar strings): volume keys, the a11y button, QS tile, the 2/3-finger swipe-up
+         * gesture, the keyboard shortcut, the keyboard's top-row a11y key and the quick-access menu.
+         */
+        val SHORTCUT_KEYS = listOf(
+            "accessibility_shortcut_target_service",
+            "accessibility_button_targets",
+            "accessibility_qs_targets",
+            "accessibility_gesture_targets",
+            "accessibility_key_gesture_targets",
+            "accessibility_top_row_key_targets",
+            "accessibility_quick_access_targets",
+        )
+
+        const val UNBOUNDED_MESSAGE = "A followed schedule or Quick Block blocks with no end (no timer, \"until I stop it\" " +
+            "or always on). Strict Mode would never reach standby and couldn't be turned off. Stop it or give it an end first."
+
         const val PLEDGE = "I am choosing to end Strict Mode early because of a real emergency. " +
             "I understand I can do this only once every 30 days."
     }
