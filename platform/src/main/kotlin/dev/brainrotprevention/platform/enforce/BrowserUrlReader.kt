@@ -190,10 +190,15 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         return all.firstOrNull()
     }
 
-    /** Every URL-bar node of [root], in id order (all view-id matches, not only the first). */
+    /**
+     * The URL-bar nodes of [root]: every match of the first id in table order that matches at all (several matches of
+     * one id = several bars, e.g. a preview sheet). Later ids are fallbacks (§7.2 "tried in order") and are used only
+     * when earlier ids found nothing, so a title field shown next to the real bar is never judged as a URL.
+     */
     fun findAll(root: AccessibilityNodeInfo, pkg: String, entry: BrowserEntry): List<Triple<AccessibilityNodeInfo, Boolean, UrlBarSource>> {
         val out = ArrayList<Triple<AccessibilityNodeInfo, Boolean, UrlBarSource>>(1)
         for (id in entry.urlBarIds) {
+            if (out.isNotEmpty()) break
             when (id.kind) {
                 UrlBarIdKind.VIEW_ID -> root.findAccessibilityNodeInfosByViewId("$pkg:id/${id.id}")?.forEach {
                     out += Triple(it, id.reliable, id.source)

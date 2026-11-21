@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -15,11 +17,23 @@ android {
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // Local release key (keystore/ is gitignored). Without it, release builds stay unsigned.
+    val releaseProps = rootProject.file("keystore/keystore.properties")
+    if (releaseProps.exists()) {
+        val p = Properties().apply { releaseProps.inputStream().use { load(it) } }
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(p.getProperty("storeFile"))
+            storePassword = p.getProperty("storePassword")
+            keyAlias = p.getProperty("keyAlias")
+            keyPassword = p.getProperty("keyPassword")
+        }
+    }
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".debug"
         }
         getByName("release") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro", "proguard-strip-log.pro")
         }

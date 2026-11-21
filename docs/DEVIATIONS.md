@@ -141,7 +141,8 @@
   every window (engine test `Round2RegressionTest.everyBrowserWindowIsJudged`), but there is no G3/scenario for it: the
   fixture browser is `singleTask` (one window), and a same-package split screen needs a multi-instance fixture activity
   plus a scripted split-screen launch on the phone emulator. Which split stage `getWindows()` lists first was not checked.
-- **Several URL bars in one window (review round 3, minor 4):** every bar is read and judged (per-bar `lastUrl`), but no
+- **Several URL bars in one window (review round 3, minor 4):** every match of the first matching URL-bar id is read and judged (per-bar `lastUrl`); later ids in the table are
+  fallbacks used only when earlier ids match nothing (review round 4), so a title field is never judged next to the real bar. No
   scenario covers it; whether Chrome's "Preview page" sheet carries its own `url_bar` node was not checked on a device.
 - **WebAPK / TWA drawn by Chrome (adversarial 5):** a Chrome window without a URL bar is judged only through the 10 s
   `url_bar_missing` rule (now not reset on relaunch, 60 s grace). Detecting the WebAPK that owns Chrome's task (to block
