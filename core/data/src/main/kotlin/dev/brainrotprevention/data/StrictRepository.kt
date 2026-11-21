@@ -1,0 +1,62 @@
+package dev.brainrotprevention.data
+
+import dev.brainrotprevention.data.db.EmergencyUnblockEntity
+import dev.brainrotprevention.data.db.toEntity
+import dev.brainrotprevention.data.db.toModel
+import dev.brainrotprevention.engine.EditGuard
+import dev.brainrotprevention.engine.TamperCheck
+import dev.brainrotprevention.model.EmergencyUnblock
+import dev.brainrotprevention.model.StrictModeRow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+/**
+ * The strict_mode row and the emergency log (§9). State transitions are computed by `StrictPolicy`
+ * (activate, unlock, tamper check, emergency); this repository persists their results.
+ */
+class StrictRepository internal constructor(private val c: DataCore) {
+    private val dao get() = c.db.strict()
+
+    val strict: Flow<StrictModeRow> = c.db.strict().observe().map { it.toModel() }.distinctUntilChanged()
+
+    val emergencyLog: Flow<List<EmergencyUnblock>> =
+        c.db.strict().observeEmergencyLog().map { l -> l.map { it.toModel() } }.distinctUntilChanged()
+
+    suspend fun get(): StrictModeRow = dao.get().toModel()
+
+    suspend fun getEmergencyLog(): List<EmergencyUnblock> = dao.getEmergencyLog().map { it.toModel() }
+
+    /** A user edit of the row (extend TIMER, follow all). While ON, EditGuard.checkStrict restricts it. */
+    suspend fun edit(new: StrictModeRow): WriteResult<Unit> = c.write { g ->
+        WriteResult.locked(EditGuard.checkStrict(g.strict, new))?.let { return@write it }
+        dao.upsert(new.toEntity())
+        WriteResult.ok()
+    }
+
+    /**
+     * Persists a row returned by a `StrictPolicy` transition (activate, unlock*, deactivated, afterBoot,
+     * wrong-PIN bookkeeping). Not guarded: StrictPolicy already enforced the rules.
+     */
+    suspend fun writePolicyResult(row: StrictModeRow) = c.plain { dao.upsert(row.toEntity()) }
+
+    /** Persists `StrictPolicy.check` (row + skew-adjusted log) in one transaction; no-op if unchanged. */
+    suspend fun writeTamperCheck(t: TamperCheck) {
+        if (!t.changed) return
+        c.plain {
+            c.tx {
+                dao.upsert(t.row.toEntity())
+                dao.clearEmergencyLog()
+                dao.insertEmergencyAll(t.emergencyLog.map { EmergencyUnblockEntity(it.id, it.at) })
+            }
+        }
+    }
+
+    /** Persists `EmergencyResult.Done(row, entry)`: the INACTIVE row plus the new log entry. */
+    suspend fun writeEmergency(row: StrictModeRow, entry: EmergencyUnblock): Long = c.plain {
+        c.tx {
+            dao.upsert(row.toEntity())
+            dao.insertEmergency(EmergencyUnblockEntity(0, entry.at))
+        }
+    }
+}

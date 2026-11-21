@@ -52,3 +52,18 @@
 - **Tamper bookkeeping** (`lastCheck*`) is kept and skew-adjusted also while Strict Mode is INACTIVE, so the emergency 30-day window resists clock jumps between activations. `Engine.evaluate` never mutates the strict row; the platform calls `StrictPolicy.check` (every minute, TIME_SET, TIMEZONE_CHANGED, shutdown, boot).
 - **Backup import:** web-rule values are normalised on import (a DOMAIN with a path keeps only the domain); duplicates after normalisation, duplicate SSIDs/packages, and more than 100 locations in total are rejected. Missing optional JSON fields take the editor defaults. Pref ranges (unspecified in §4): limitWarningMin 0–120, notifyBeforeStartMin 0–120, notifyBeforePauseEndMin 0–60. The export writes `pendingDayStartHour` (if set) as `dayStartHour`.
 - **WeakenChecker:** adding another row of an existing trigger type (rows are OR'd) is allowed even under ALL; under ALLOWLIST+OPEN, web-rule edits are free (they have no effect until ONLY_LISTED, which is itself a strengthening).
+
+## Data layer (core:data)
+- **Import is two writes:** schedules, Quick Block items and excluded browsers are replaced in one Room transaction; the
+  prefs (DataStore) are written right after the commit. The whole file is validated before either write, so only an
+  I/O failure could split them.
+- **Import applies `dayStartHour` directly** (pending cleared) instead of going through `pendingDayStartHour`: every
+  usage counter is deleted with the replaced schedules, so there is no running period to protect. Import keeps Quick
+  Block `active`/`until` (not part of the backup) and only replaces its items and `blockNotifications`.
+- **Upsert keys (§4 "natural key"):** limits match by `kind`, Wi-Fi by `ssid`, apps by package, web rules by
+  `(kind, value)` — the editor's row id is ignored for these, so a counter can never move to a limit of another kind.
+  Time windows and locations (no unique key in §4.1) match by id first, then by all their values.
+- **EditGuard's displayed strict state** is computed in the data layer (`StrictGate`: `Engine.status` on the current
+  snapshot and counters, with platform-installed sensors or the engine host's last evaluation as an override), so UI and
+  debug commands get the same refusal.
+- **`state.json`** is `{config: ConfigSnapshot, counters, strict, …}`; later milestones add keys via `StateContributors`.

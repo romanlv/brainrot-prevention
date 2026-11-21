@@ -14,6 +14,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     testOptions { unitTests { isIncludeAndroidResources = true } }
+    // MigrationTestHelper reads the exported schemas from the test assets.
+    sourceSets { getByName("test") { assets.directories += "$projectDir/schemas" } }
     buildTypes { create("qa") { initWith(getByName("release")) } }
 }
 dependencies {

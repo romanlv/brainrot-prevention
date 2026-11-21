@@ -18,5 +18,6 @@ internal object BuiltinDebugCommands {
                 Result.ok("mark $id")
             }
         }
+        DataDebugCommands.registerAll()
     }
 }
