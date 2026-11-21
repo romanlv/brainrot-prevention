@@ -45,7 +45,8 @@ enum class Refusal {
 
     /**
      * Strict SCHEDULES with LOCK_EDITING: starting something on a followed item that blocks with no end (no-timer
-     * Quick Block, Start now "until I stop it", an always-on schedule) would keep Strict Mode on for good.
+     * Quick Block, Start now "until I stop it", an always-on schedule), or a followed schedule edit that leaves the
+     * followed items no free run of [StrictPolicy.MIN_FREE_GAP_MS] in the week, would keep Strict Mode on for good.
      */
     UNBOUNDED_UNDER_STRICT,
 }
@@ -249,6 +250,13 @@ object EditGuard {
             LockScope.FOLLOWED -> scheduleId in StrictPolicy.followed(row, schedules)
         }
 
+    /**
+     * [quickBlock] is the current Quick Block, needed for the Strict SCHEDULES lock-in test: under SCHEDULES with
+     * LOCK_EDITING, an edit or creation is refused ([Refusal.UNBOUNDED_UNDER_STRICT]) when it makes a followed item
+     * unbounded on its own, or when it makes the followed items together leave no free run of
+     * [StrictPolicy.MIN_FREE_GAP_MS] in the week ([StrictPolicy.followedLockIn], with [new] in place of [old]).
+     * When the followed set already leaves no free run, edits are judged by the normal lock only.
+     */
     fun checkSchedule(
         row: StrictModeRow,
         display: StrictDisplayState,
@@ -256,14 +264,16 @@ object EditGuard {
         old: Schedule?,
         new: Schedule?,
         now: Long,
+        quickBlock: QuickBlock = QuickBlock(),
     ): EditCheck {
-        if (new != null &&
-            StrictPolicy.locksUnbounded(row) &&
-            StrictPolicy.isFollowed(row, new) &&
-            StrictPolicy.isUnbounded(new) &&
-            (old == null || !StrictPolicy.isUnbounded(old) || !StrictPolicy.isFollowed(row, old))
-        ) {
-            return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
+        if (new != null && StrictPolicy.locksUnbounded(row)) {
+            val itemNowUnbounded = StrictPolicy.isFollowed(row, new) &&
+                StrictPolicy.isUnbounded(new) &&
+                (old == null || !StrictPolicy.isUnbounded(old) || !StrictPolicy.isFollowed(row, old))
+            val after = schedules.filter { old == null || it.id != old.id } + new
+            val unionNowLocked = StrictPolicy.followedLockIn(row, after, quickBlock) &&
+                !StrictPolicy.followedLockIn(row, schedules, quickBlock)
+            if (itemNowUnbounded || unionNowLocked) return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
         }
         val id = old?.id ?: return EditCheck.Allowed
         if (!isLocked(row, display, schedules, id)) return EditCheck.Allowed
@@ -296,8 +306,10 @@ object EditGuard {
         new: QuickBlock,
         now: Long,
     ): EditCheck {
-        if (StrictPolicy.locksUnbounded(row) && row.followAllSchedules && StrictPolicy.isUnbounded(new) && !StrictPolicy.isUnbounded(old)) {
-            return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
+        if (StrictPolicy.locksUnbounded(row) && row.followAllSchedules) {
+            val itemNowUnbounded = StrictPolicy.isUnbounded(new) && !StrictPolicy.isUnbounded(old)
+            val unionNowLocked = StrictPolicy.followedLockIn(row, schedules, new) && !StrictPolicy.followedLockIn(row, schedules, old)
+            if (itemNowUnbounded || unionNowLocked) return EditCheck.Refused(Refusal.UNBOUNDED_UNDER_STRICT)
         }
         return if (isLocked(row, display, schedules, QUICK_BLOCK_ID)) WeakenChecker.checkQuickBlock(old, new, now) else EditCheck.Allowed
     }

@@ -35,7 +35,8 @@ p.strict          // StrictActivator
 - `fun check(): HealthReport` (cheap, call on resume) and `report: StateFlow<HealthReport>` (refreshed on
   `refresh()`, service connect, every 6 h).
 - `HealthReport(items: List<GrantStatus>, restrictedInstall: Boolean, advancedProtection: Boolean,
-  settingsLockedByStrict: Boolean)`; `HealthReport.ok` = every `required` item granted;
+  settingsLockedByStrict: Boolean, accessibilityStarting: Boolean)`; `accessibilityStarting` = enabled but not bound yet
+  within the 30 s grace (don't show "Blocking is off" for it); `HealthReport.ok` = every `required` item granted;
   `operator get(kind)`.
 - `GrantStatus(kind: Grant, granted: Boolean, required: Boolean, detail: String?)`.
 - `enum Grant { ACCESSIBILITY /* enabled AND connected; detail says which */, USAGE_ACCESS,

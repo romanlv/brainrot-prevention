@@ -283,8 +283,9 @@ class StrictActivator internal constructor(private val app: Context, private val
             "accessibility_quick_access_targets",
         )
 
-        const val UNBOUNDED_MESSAGE = "A followed schedule or Quick Block blocks with no end (no timer, \"until I stop it\" " +
-            "or always on). Strict Mode would never reach standby and couldn't be turned off. Stop it or give it an end first."
+        const val UNBOUNDED_MESSAGE = "The followed schedules and Quick Block block with no break (no timer, \"until I " +
+            "stop it\", always on, or schedules covering the whole week together), so Strict Mode could never be turned " +
+            "off. Leave at least 10 minutes a week unscheduled so Strict Mode can be turned off, or stop the item first."
 
         const val PLEDGE = "I am choosing to end Strict Mode early because of a real emergency. " +
             "I understand I can do this only once every 30 days."

@@ -49,6 +49,11 @@ data class HealthReport(
     val advancedProtection: Boolean = false,
     /** Strict Mode ACTIVE with BLOCK_SETTINGS: our Settings deep links show "Locked by Strict Mode" (§9.3). */
     val settingsLockedByStrict: Boolean = false,
+    /**
+     * The service is enabled but hasn't bound yet, within [PermissionHealth.UNBOUND_GRACE_MS] of process start or of
+     * the last unbind (a cold start): not reported as "Blocking is off" yet (review round 3, minor 5).
+     */
+    val accessibilityStarting: Boolean = false,
 ) {
     val ok: Boolean get() = items.all { it.granted || !it.required }
 
@@ -162,7 +167,8 @@ class PermissionHealth internal constructor(private val app: Context, private va
             GrantStatus(Grant.BATTERY_OPTIMIZATION, ignoringBatteryOptimizations(), false),
             GrantStatus(Grant.DEVICE_ADMIN, g.strict.isAdminActive(), false),
         )
-        return HealthReport(items, restrictedInstall(), advancedProtection(), settingsLockedByStrict())
+        val starting = a11yOn && !connected && SystemTimeAndroid.elapsedRealtime() - unboundSinceRt < UNBOUND_GRACE_MS
+        return HealthReport(items, restrictedInstall(), advancedProtection(), settingsLockedByStrict(), starting)
     }
 
     fun accessibilityEnabled(): Boolean {

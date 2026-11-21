@@ -114,6 +114,11 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
                     val activity = androidx.activity.compose.LocalActivity.current
                     BlockingOffBanner(state) { activity?.let(vm::fixBlocking) }
                 }
+            } else if (state.triggersUnchecked) {
+                item {
+                    val activity = androidx.activity.compose.LocalActivity.current
+                    TriggersUncheckedNotice { activity?.let(vm::fixBlocking) }
+                }
             }
             item { StatusCard(state) }
             item {
@@ -220,6 +225,30 @@ private fun BlockingOffBanner(state: HomeState, onFix: () -> Unit) {
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .testTag("blocking_off_fix"),
+            ) { Text("Fix") }
+        }
+    }
+}
+
+/** Review round 3, minor 5: a missing location grant only stops Wi-Fi/location triggers; say just that. */
+@Composable
+private fun TriggersUncheckedNotice(onFix: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("triggers_unchecked_notice"),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Wi-Fi/location triggers can't be checked", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Location permission is missing, so schedules don't react to Wi-Fi or location. Everything else is blocked as usual.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            androidx.compose.material3.TextButton(
+                onClick = onFix,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("triggers_unchecked_fix"),
             ) { Text("Fix") }
         }
     }

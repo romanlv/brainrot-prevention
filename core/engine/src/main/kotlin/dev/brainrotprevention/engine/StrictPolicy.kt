@@ -14,6 +14,7 @@ import dev.brainrotprevention.model.TriggerType
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.BitSet
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
@@ -61,8 +62,10 @@ enum class ActivationRefusal {
     FOLLOWED_SET_EMPTY,
 
     /**
-     * SCHEDULES with LOCK_EDITING while a followed item blocks with no end (Quick Block without a timer, Start now
-     * "until I stop it", an always-on schedule): Strict Mode would never reach STANDBY and could not be turned off.
+     * SCHEDULES with LOCK_EDITING while the followed items leave no free run of [StrictPolicy.MIN_FREE_GAP_MS] in the
+     * week ([StrictPolicy.followedLockIn]): Quick Block without a timer, Start now "until I stop it", an always-on
+     * schedule, or several schedules that cover the week between them. Strict Mode would never stay in STANDBY long
+     * enough to be turned off.
      */
     UNBOUNDED_FOLLOWED,
 }
@@ -150,26 +153,83 @@ object StrictPolicy {
         if (row.followAllSchedules) s.mode != Mode.ALLOWLIST else s.strictFollowed && s.mode == Mode.BLOCKLIST
 
     /**
-     * A schedule that, once armed, stays blocking with no end of its own (review round 2, adversarial 7): Start now
-     * "until I stop it", or enabled with triggers that always hold (no triggers = "Always on", or time windows
-     * covering the whole week when the time trigger alone arms it). A schedule with a budget is not unbounded
-     * (it stops blocking at the next period reset). Pauses don't count (a pause ends by itself).
+     * The week cells (7×1440, [WeakenChecker.coverage] layout) in which [s] blocks unconditionally once armed, so the
+     * Strict SCHEDULES display can't reach STANDBY there (review round 3, major 1):
+     * - a schedule with a budget covers nothing (it stops blocking at the next period reset); so does an allowlist
+     *   (never followed) or a schedule that is turned off;
+     * - Start now "until I stop it" covers the whole week; a bounded Start now ends by itself and covers nothing;
+     * - no triggers ("Always on") covers the whole week;
+     * - Wi-Fi/location conditions cover nothing (the user can leave), so with Combine ALL they make the time windows
+     *   conditional too; with ANY (or time alone) the time windows count.
+     * Pauses don't count (a pause ends by itself), so a paused schedule is judged as if it weren't paused.
      */
-    fun isUnbounded(s: Schedule): Boolean {
-        if (s.mode != Mode.BLOCKLIST || s.limits.isNotEmpty()) return false
-        if (s.manualUntil == Schedule.UNTIL_STOPPED) return true
-        if (!s.enabled) return false
+    fun lockCoverage(s: Schedule): BitSet {
+        val bits = BitSet(WeakenChecker.CELLS)
+        if (s.mode != Mode.BLOCKLIST || s.limits.isNotEmpty()) return bits
+        if (s.manualUntil == Schedule.UNTIL_STOPPED) return bits.apply { set(0, WeakenChecker.CELLS) }
+        if (!s.enabled) return bits
         val present = s.triggerTypes
-        if (present.isEmpty()) return true
-        if (TriggerType.TIME !in present) return false
-        if (s.combine == Combine.ALL && present != setOf(TriggerType.TIME)) return false
-        return WeakenChecker.coverage(s.copy(wifi = emptyList(), locations = emptyList())).cardinality() == WeakenChecker.CELLS
+        if (present.isEmpty()) return bits.apply { set(0, WeakenChecker.CELLS) }
+        if (TriggerType.TIME !in present) return bits
+        if (s.combine == Combine.ALL && present != setOf(TriggerType.TIME)) return bits
+        return WeakenChecker.coverage(s.copy(wifi = emptyList(), locations = emptyList()))
     }
+
+    /** Quick Block running with no timer covers the whole week; with a timer it ends by itself. */
+    fun lockCoverage(q: QuickBlock): BitSet =
+        BitSet(WeakenChecker.CELLS).apply { if (isUnbounded(q)) set(0, WeakenChecker.CELLS) }
+
+    /**
+     * The shortest free run Strict SCHEDULES needs somewhere in the week: the STANDBY turn-off wait
+     * ([STANDBY_TURN_OFF_COOLDOWN_MS]) plus a 5-minute margin. Shown to the user as "leave at least 10 minutes a week
+     * unscheduled".
+     */
+    const val MIN_FREE_GAP_MS = STANDBY_TURN_OFF_COOLDOWN_MS + 5 * Periods.MINUTE
+    private val MIN_FREE_GAP_CELLS = (MIN_FREE_GAP_MS / Periods.MINUTE).toInt()
+
+    /** Whether [covered] leaves a free run of at least [MIN_FREE_GAP_MS] somewhere in the week (wrapping Sun→Mon). */
+    fun hasFreeGap(covered: BitSet): Boolean {
+        val n = WeakenChecker.CELLS
+        var run = 0
+        // Two passes over the week so a run across the Sunday/Monday boundary is counted.
+        for (i in 0 until 2 * n) {
+            if (covered[i % n]) {
+                run = 0
+            } else if (++run >= MIN_FREE_GAP_CELLS) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * A schedule that, once armed, blocks with no usable end of its own: its [lockCoverage] leaves no free run of
+     * [MIN_FREE_GAP_MS] in the week (Start now "until I stop it", "Always on", whole-week windows, or windows whose
+     * gaps are shorter than the turn-off wait).
+     */
+    fun isUnbounded(s: Schedule): Boolean = !hasFreeGap(lockCoverage(s))
 
     /** Quick Block running with no timer. */
     fun isUnbounded(q: QuickBlock): Boolean = q.active && q.until == null && !q.isEmpty
 
-    /** Followed items (schedule ids, [QUICK_BLOCK_ID]) that block with no end under [row]'s following rule. */
+    /** The union of [lockCoverage] over the items [row]'s following rule follows. */
+    fun followedLockCoverage(row: StrictModeRow, schedules: List<Schedule>, quickBlock: QuickBlock): BitSet {
+        val f = followed(row, schedules)
+        val bits = BitSet(WeakenChecker.CELLS)
+        for (s in schedules) if (s.id in f.scheduleIds) bits.or(lockCoverage(s))
+        if (f.quickBlock) bits.or(lockCoverage(quickBlock))
+        return bits
+    }
+
+    /**
+     * Whether the items followed under [row]'s following rule leave Strict SCHEDULES no STANDBY window long enough to
+     * turn it off: their combined [lockCoverage] has no free run of [MIN_FREE_GAP_MS] in the week. Covers single
+     * unbounded items as well as several bounded schedules that cover the week together (review round 3, major 1).
+     */
+    fun followedLockIn(row: StrictModeRow, schedules: List<Schedule>, quickBlock: QuickBlock): Boolean =
+        !hasFreeGap(followedLockCoverage(row, schedules, quickBlock))
+
+    /** Followed items (schedule ids, [QUICK_BLOCK_ID]) that on their own block with no usable end. */
     fun unboundedFollowed(row: StrictModeRow, schedules: List<Schedule>, quickBlock: QuickBlock): List<Long> {
         val f = followed(row, schedules)
         val ids = schedules.filter { it.id in f.scheduleIds && isUnbounded(it) }.map { it.id }
@@ -205,7 +265,7 @@ object StrictPolicy {
             followed(StrictModeRow(followAllSchedules = req.followAllSchedules), schedules).isEmpty -> ActivationRefusal.FOLLOWED_SET_EMPTY
         req.method == StrictMethod.SCHEDULES &&
             StrictOptions.has(req.options, StrictOptions.LOCK_EDITING) &&
-            unboundedFollowed(StrictModeRow(followAllSchedules = req.followAllSchedules), schedules, quickBlock).isNotEmpty() ->
+            followedLockIn(StrictModeRow(followAllSchedules = req.followAllSchedules), schedules, quickBlock) ->
             ActivationRefusal.UNBOUNDED_FOLLOWED
         else -> null
     }

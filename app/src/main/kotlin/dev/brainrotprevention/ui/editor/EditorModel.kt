@@ -140,6 +140,13 @@ object EditorOps {
     /** Bulk paste text kept in the dialog (and its saved state); longer pastes are cut here. */
     const val MAX_PASTE_CHARS = 64_000
 
+    /**
+     * [text] cut to [MAX_PASTE_CHARS], or null when it fits. The cut goes back to the last line break, so a line cut
+     * in the middle ("…\nexample.co" from "example.com") isn't added as a different rule (review round 3, minor 7).
+     */
+    fun capPaste(text: String): String? =
+        if (text.length <= MAX_PASTE_CHARS) null else text.take(MAX_PASTE_CHARS).substringBeforeLast('\n', missingDelimiterValue = "")
+
     /** Rule rows shown before "Show more" (the editor column isn't lazy). */
     const val RULES_PAGE = 50
 

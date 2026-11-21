@@ -62,7 +62,9 @@ Nothing is written when the result is not `Ok`.
 ## StrictRepository (`graph.strict`)
 - `strict: Flow<StrictModeRow>` (default INACTIVE row when none), `emergencyLog: Flow<List<EmergencyUnblock>>`,
   `suspend get()`, `suspend getEmergencyLog()`.
-- `edit(new): WriteResult<Unit>` — user edits (extend TIMER, followAll false→true); `EditGuard.checkStrict`.
+- `edit(new): WriteResult<Unit>` — user edits (extend TIMER, followAll false→true); `EditGuard.checkStrict`. Under SCHEDULES +
+  LOCK_EDITING, follow-all false→true is `Locked(UNBOUNDED_UNDER_STRICT)` when it would close the week's last free run
+  (`StrictPolicy.followedLockIn`).
 - `extendTimer(extraMs): WriteResult<Unit>` — reads the row under the write lock; `NotFound` when no TIMER is running,
   `Invalid` when the end would be more than 30 days from now.
 - Unguarded, for rows produced by `StrictPolicy`: `writePolicyResult(row)` (activate, unlock*, wrong-PIN,

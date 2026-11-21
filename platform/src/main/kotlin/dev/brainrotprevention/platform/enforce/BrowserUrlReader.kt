@@ -16,9 +16,13 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Reads browser URL bars (§7.8): throttled per window, judged only when the bar isn't focused and the text has
- * no internal whitespace; keeps `lastUrl` per (browser, window) until a new URL is read in that window, the window
+ * no internal whitespace; keeps `lastUrl` per (browser, window, bar) until a new URL is read in that bar, the window
  * goes away or the browser leaves the foreground set. Every application window of a browser is read (split screen,
- * "Open in new window", a Custom Tab next to the browser), not only the first one (review round 2, adversarial 3).
+ * "Open in new window", a Custom Tab next to the browser), not only the first one (review round 2, adversarial 3),
+ * and every URL bar of a window is judged (a preview sheet with its own bar, review round 3 minor 4).
+ *
+ * Reads are dropped only for windows that `getWindows()` no longer lists. A failed `getWindows()` or a listed window
+ * whose root is null (a busy UI thread, a transition) keeps them (review round 3, minor 3).
  *
  * Flags `url_bar_missing` after 10 s in which a browser window had no URL bar (§7.2). That clock is kept for
  * [MISSING_GRACE_MS] after the browser leaves the foreground, so relaunching a web app that the browser draws
@@ -27,9 +31,10 @@ import java.util.concurrent.ConcurrentHashMap
 class BrowserUrlReader(private val service: AccessibilityService, private val browsers: () -> Map<String, BrowserEntry>) {
     data class Read(val url: String, val reliable: Boolean, val windowId: Int, val atRt: Long)
 
-    private data class Key(val pkg: String, val windowId: Int)
+    /** [bar] is the URL bar's index among [findAll]'s matches in that window. */
+    private data class Key(val pkg: String, val windowId: Int, val bar: Int)
 
-    /** (browser package, window id) → latest read in that window. */
+    /** (browser package, window id, bar index) → latest read of that bar. */
     private val lastUrl = ConcurrentHashMap<Key, Read>()
     private val lastExtractRt = ConcurrentHashMap<Int, Long>()
 
@@ -59,7 +64,7 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         val urlBarText = type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && isUrlBar(e, entry)
         if (!urlBarText && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && now - last < 250) return false
         lastExtractRt[wid] = now
-        val root = rootsFor(pkg).firstOrNull { it.windowId == wid } ?: return extract(pkg, entry)
+        val root = windowsOf(pkg).roots.firstOrNull { it.windowId == wid } ?: return extract(pkg, entry)
         return extractWindow(pkg, entry, root).changed
     }
 
@@ -75,15 +80,18 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
      * reads of windows that are gone. Returns true when a judged URL changed.
      */
     fun extract(pkg: String, entry: BrowserEntry): Boolean {
-        val roots = rootsFor(pkg)
-        val ids = roots.map { it.windowId }.toSet()
-        lastUrl.keys.removeIf { it.pkg == pkg && it.windowId !in ids }
+        val w = windowsOf(pkg)
+        val roots = w.roots
+        // Prune only on a successful, non-empty listing, and keep windows that are listed but returned no root. A
+        // browser that left the foreground is dropped by [targets].
+        val listed = w.listedIds
+        if (!listed.isNullOrEmpty()) lastUrl.keys.removeIf { it.pkg == pkg && it.windowId !in listed }
         var changed = false
         var anyWithoutBar = false
         for (root in roots) {
             val r = extractWindow(pkg, entry, root)
             changed = changed || r.changed
-            if (!r.hasBar && !lastUrl.containsKey(Key(pkg, root.windowId))) anyWithoutBar = true
+            if (!r.hasBar && lastUrl.keys.none { it.pkg == pkg && it.windowId == root.windowId }) anyWithoutBar = true
         }
         if (roots.isEmpty()) return changed
         if (anyWithoutBar) {
@@ -97,24 +105,25 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
 
     private fun extractWindow(pkg: String, entry: BrowserEntry, root: AccessibilityNodeInfo): WindowRead {
         val wid = root.windowId
-        val key = Key(pkg, wid)
         val bars = findAll(root, pkg, entry)
         if (bars.isEmpty()) {
             // Toolbar hidden after a read in this window: keep lastUrl (handled by the caller's missing check).
             return WindowRead(false, false)
         }
-        // Judge the first usable bar (unfocused, a URL without whitespace); several matches (a preview sheet) are
-        // all tried.
-        for ((node, reliable, source) in bars) {
+        // A bar that went away (a closed preview sheet) no longer shows its URL.
+        lastUrl.keys.removeIf { it.pkg == pkg && it.windowId == wid && it.bar >= bars.size }
+        // Judge every usable bar (unfocused, a URL without whitespace); a focused or empty bar keeps its last read.
+        var changed = false
+        bars.forEachIndexed { i, (node, reliable, source) ->
             val text = (if (source == UrlBarSource.TEXT) node.text else node.contentDescription)?.toString()?.trim()
-            if (text.isNullOrEmpty() || node.isFocused || text.any { it.isWhitespace() }) continue
-            val prev = lastUrl[key]
-            if (prev != null && prev.url == text) return WindowRead(false, true)
+            if (text.isNullOrEmpty() || node.isFocused || text.any { it.isWhitespace() }) return@forEachIndexed
+            val key = Key(pkg, wid, i)
+            if (lastUrl[key]?.url == text) return@forEachIndexed
             lastUrl[key] = Read(text, reliable, wid, SystemTimeAndroid.elapsedRealtime())
-            Brp.event("url", "pkg" to pkg, "url" to text, "reliable" to reliable, "window" to wid)
-            return WindowRead(true, true)
+            Brp.event("url", "pkg" to pkg, "url" to text, "reliable" to reliable, "window" to wid, "bar" to i)
+            changed = true
         }
-        return WindowRead(false, true)
+        return WindowRead(changed, true)
     }
 
     private fun noteMissing(pkg: String) {
@@ -123,26 +132,38 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         if (now - first >= 10_000 && missing.add(pkg)) Brp.event("url_bar_missing", "pkg" to pkg)
     }
 
-    /** The URL bar's current text in [windowId] (any window of [pkg] when -1 or gone), read now; null when not found or focused. */
-    fun peek(pkg: String, entry: BrowserEntry, windowId: Int = -1): String? {
-        val roots = rootsFor(pkg)
-        val root = roots.firstOrNull { it.windowId == windowId } ?: roots.firstOrNull() ?: return null
-        val (node, _, source) = find(root, pkg, entry) ?: return null
-        node.refresh()
-        if (node.isFocused) return null
-        return (if (source == UrlBarSource.TEXT) node.text else node.contentDescription)?.toString()?.trim()
+    /**
+     * The current text of every URL bar in [windowId] (any window of [pkg] when -1 or gone), read now; focused bars
+     * are left out. Empty when no bar is found.
+     */
+    fun peek(pkg: String, entry: BrowserEntry, windowId: Int = -1): List<String> {
+        val root = rootFor(pkg, windowId) ?: return emptyList()
+        return findAll(root, pkg, entry).mapNotNull { (node, _, source) ->
+            node.refresh()
+            if (node.isFocused) return@mapNotNull null
+            (if (source == UrlBarSource.TEXT) node.text else node.contentDescription)?.toString()?.trim()
+        }
     }
 
-    /** Roots of [pkg]'s application windows, in `getWindows()` order. */
-    fun rootsFor(pkg: String): List<AccessibilityNodeInfo> {
+    /**
+     * [roots]: [pkg]'s application windows that returned a root, in `getWindows()` order. [listedIds]: the ids of every
+     * listed application window (also those whose root was null), or null when `getWindows()` failed.
+     */
+    private class Windows(val roots: List<AccessibilityNodeInfo>, val listedIds: Set<Int>?)
+
+    private fun windowsOf(pkg: String): Windows {
         val windows = try {
             service.windows
         } catch (_: RuntimeException) {
             null
-        } ?: return emptyList()
-        return windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .mapNotNull { w -> runCatching { w.root }.getOrNull()?.takeIf { it.packageName?.toString() == pkg } }
+        } ?: return Windows(emptyList(), null)
+        val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        val roots = apps.mapNotNull { w -> runCatching { w.root }.getOrNull()?.takeIf { it.packageName?.toString() == pkg } }
+        return Windows(roots, apps.mapTo(HashSet()) { it.id })
     }
+
+    /** Roots of [pkg]'s application windows, in `getWindows()` order. */
+    fun rootsFor(pkg: String): List<AccessibilityNodeInfo> = windowsOf(pkg).roots
 
     /** The root of [pkg]'s window [windowId], else its first application window. */
     fun rootFor(pkg: String, windowId: Int): AccessibilityNodeInfo? {
@@ -150,9 +171,24 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         return roots.firstOrNull { it.windowId == windowId } ?: roots.firstOrNull()
     }
 
-    /** Finds the URL-bar node: the browser's ids in order (VIEW_ID by id lookup, COMPOSE_TAG by tree walk). */
-    fun find(root: AccessibilityNodeInfo, pkg: String, entry: BrowserEntry): Triple<AccessibilityNodeInfo, Boolean, UrlBarSource>? =
-        findAll(root, pkg, entry).firstOrNull()
+    /**
+     * Finds the URL-bar node: the browser's ids in order (VIEW_ID by id lookup, COMPOSE_TAG by tree walk). With
+     * [showing], the bar whose text is [showing] (the blocked URL) is preferred over the first one.
+     */
+    fun find(
+        root: AccessibilityNodeInfo,
+        pkg: String,
+        entry: BrowserEntry,
+        showing: String? = null,
+    ): Triple<AccessibilityNodeInfo, Boolean, UrlBarSource>? {
+        val all = findAll(root, pkg, entry)
+        if (showing != null) {
+            all.firstOrNull { (node, _, source) ->
+                (if (source == UrlBarSource.TEXT) node.text else node.contentDescription)?.toString()?.trim() == showing
+            }?.let { return it }
+        }
+        return all.firstOrNull()
+    }
 
     /** Every URL-bar node of [root], in id order (all view-id matches, not only the first). */
     fun findAll(root: AccessibilityNodeInfo, pkg: String, entry: BrowserEntry): List<Triple<AccessibilityNodeInfo, Boolean, UrlBarSource>> {

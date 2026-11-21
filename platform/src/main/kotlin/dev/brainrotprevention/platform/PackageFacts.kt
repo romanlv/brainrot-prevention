@@ -3,6 +3,7 @@ package dev.brainrotprevention.platform
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.AlarmClock
@@ -106,6 +107,7 @@ class PackageFacts internal constructor(private val app: Context, private val g:
             "reason" to reason,
             "unsupported" to unsupported.sorted(),
             "webApps" to webApps.keys.sorted(),
+            "essentials" to facts.allowlistEssentials.sorted(),
             "added" to added.sorted(),
             "removed" to removed.sorted(),
         )
@@ -163,21 +165,28 @@ class PackageFacts internal constructor(private val app: Context, private val g:
 
     private fun essentials(): Set<String> {
         val out = LinkedHashSet<String>()
-        // Clock (§6.3), and the system screens other apps open on Android 14+ (share sheet, photo picker, captive
-        // portal login; review round 2, adversarial 8), whatever package they live in on this device.
-        val intents = listOf(
-            Intent(AlarmClock.ACTION_SHOW_ALARMS),
+        // Clock (§6.3): the default clock app, whatever it is.
+        resolvedPackage(Intent(AlarmClock.ACTION_SHOW_ALARMS))?.let { out += it.packageName }
+        // The system screens other apps open on Android 14+ (share sheet, photo picker, captive portal login; review
+        // round 2, adversarial 8), whatever package they live in on this device. Only system apps qualify: a
+        // third-party chooser or gallery that wins the resolve would otherwise be allowed in every "Allow only"
+        // schedule and never have its notifications hidden (review round 3, minor 6).
+        val systemScreens = listOf(
             Intent(Intent.ACTION_CHOOSER),
             Intent("android.provider.action.PICK_IMAGES"),
             Intent("android.net.conn.CAPTIVE_PORTAL"),
         )
-        for (i in intents) {
-            runCatching { pm.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.getOrNull()?.let {
-                if (it != "android") out += it
-            }
+        for (i in systemScreens) {
+            val ai = resolvedPackage(i) ?: continue
+            if (ai.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0) out += ai.packageName
         }
         return out
     }
+
+    /** The application that [i] resolves to by default, or null (none, or the "android" resolver). */
+    private fun resolvedPackage(i: Intent): ApplicationInfo? =
+        runCatching { pm.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.applicationInfo }.getOrNull()
+            ?.takeIf { it.packageName != "android" }
 
     private fun isInstalled(p: String) = runCatching {
         pm.getPackageInfo(p, 0)

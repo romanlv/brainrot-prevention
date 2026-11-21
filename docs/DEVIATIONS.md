@@ -115,17 +115,25 @@
   `accessibility_shortcut_target_service`, `_button_targets`, `_qs_targets`, `_gesture_targets` (2/3-finger swipe up),
   `_key_gesture_targets` (keyboard), `_top_row_key_targets` and `_quick_access_targets`. It is checked at activation only.
 - **Browser windows (§7.8):** `lastUrl`, the throttle and the rewrite target are per (browser, window); every application
-  window of a browser is read before each evaluation and every URL-bar match is tried. The 10 s `url_bar_missing` clock is
+  window of a browser is read before each evaluation and every URL-bar match in a window is judged, with its own `lastUrl`
+  keyed by (browser, window, bar index); a bar that disappears drops its read, and the rewrite targets the bar that shows the
+  blocked URL (review round 3, minor 4). Reads are pruned only for windows that a successful `getWindows()` no longer lists:
+  a failed listing or a listed window whose root is null keeps them (minor 3). The 10 s `url_bar_missing` clock is
   per browser and survives the browser leaving the foreground for 60 s, so relaunching a web app that the browser draws
   without a URL bar doesn't restart it (review round 2, adversarial 3 and 5).
 - **Allowlist essentials (§6.3)** also cover the Android 14+ system screens other apps open, checked on the API 37 image:
   the share sheet (`com.android.intentresolver`), the photo picker (`com.google.android.providers.media.module`,
   `com.google.android.photopicker`, and the AOSP names), Credential Manager (`com.android.credentialmanager`) and the
-  captive-portal login; plus the packages `ACTION_CHOOSER`, `ACTION_PICK_IMAGES` and `CAPTIVE_PORTAL` resolve to. From Play
+  captive-portal login; plus the packages `ACTION_CHOOSER`, `ACTION_PICK_IMAGES` and `CAPTIVE_PORTAL` resolve to, only when
+  that package is a system app (`FLAG_SYSTEM` / `FLAG_UPDATED_SYSTEM_APP`, review round 3 minor 6; the default clock from
+  `ACTION_SHOW_ALARMS` stays unrestricted as §6.3 says). The `browsers` event lists the resolved `essentials`. From Play
   Services only the account picker, Google sign-in and passkey/password sheets are essential, by component (not the whole
   `com.google.android.gms` package).
-- **Home "Blocking is off"** banner (with Fix) replaces the red "Blocking now" headline ("Would be blocking now: …") when a
-  required grant is missing or the accessibility service isn't connected; the displayed statuses stay the UI's own.
+- **Home "Blocking is off"** banner (with Fix) replaces the red "Blocking now" headline ("Would be blocking now: …") when
+  usage access is missing or the accessibility service isn't connected (after the same 30 s bind grace as the
+  notification, so a cold start doesn't flash it); the displayed statuses stay the UI's own. A missing location grant
+  needed by a Wi-Fi/location trigger shows a smaller "Wi-Fi/location triggers can't be checked" notice instead (review
+  round 3, minor 5).
 - **Poll loop** sleeps (no 300 ms wakeups) while the screen is off or nothing is armed, until SCREEN_ON or an evaluation.
 
 ## Open
@@ -133,6 +141,8 @@
   every window (engine test `Round2RegressionTest.everyBrowserWindowIsJudged`), but there is no G3/scenario for it: the
   fixture browser is `singleTask` (one window), and a same-package split screen needs a multi-instance fixture activity
   plus a scripted split-screen launch on the phone emulator. Which split stage `getWindows()` lists first was not checked.
+- **Several URL bars in one window (review round 3, minor 4):** every bar is read and judged (per-bar `lastUrl`), but no
+  scenario covers it; whether Chrome's "Preview page" sheet carries its own `url_bar` node was not checked on a device.
 - **WebAPK / TWA drawn by Chrome (adversarial 5):** a Chrome window without a URL bar is judged only through the 10 s
   `url_bar_missing` rule (now not reset on relaunch, 60 s grace). Detecting the WebAPK that owns Chrome's task (to block
   at once, or as the listed app) was not done: minting a WebAPK needs Play Services' WebAPK server, which the emulator
@@ -206,6 +216,16 @@
   a followed schedule / Quick Block (followAll) is refused (`UNBOUNDED_UNDER_STRICT`): Quick Block "No timer", Start now
   "until I stop it", turning on or creating an always-on schedule, removing all windows. Without LOCK_EDITING the user can
   still stop the item, so nothing is refused. Spec §9.5 doesn't foresee this; without it Strict Mode never reaches STANDBY.
+  Review round 3 (major 1, minor 2) widens this to the followed set as a whole: `StrictPolicy.lockCoverage` gives the week
+  cells (7×1440) each followed item blocks unconditionally once armed (no budget; Wi-Fi/location rows don't cover, and
+  with Combine ALL they make the windows conditional too; pauses and bounded Start now are ignored; "until I stop it",
+  "Always on" and Quick Block "No timer" cover the whole week). The union must leave a free run of at least 10 minutes
+  (`MIN_FREE_GAP_MS` = the 5-minute STANDBY turn-off wait + 5 minutes margin), wrapping Sunday→Monday. It is checked at
+  activation (`UNBOUNDED_FOLLOWED`), for every followed schedule save/create/turn-on/Start now and Quick Block start while
+  SCHEDULES + LOCK_EDITING is ON (`UNBOUNDED_UNDER_STRICT`, with the edited schedule in place of the old one), and for
+  `StrictRepository.edit` turning follow-all on. When the followed set already has no free run, edits are judged by the
+  normal weaken table only. The message asks the user to "leave at least 10 minutes a week unscheduled so Strict Mode can
+  be turned off". Time windows are judged on the local wall clock, so a DST change is not modelled.
 - **TIMER extension** is capped so the end stays within 30 days of now (§9.5 range); the UI asks before extending.
 - **Proxy URLs (adversarial 4):** DOMAIN rules and host keywords also match the original host of a Google Translate proxy
   (`<host-with-dashes>.translate.goog`), an AMP cache URL (`<host>.cdn.ampproject.org`, `cdn.ampproject.org/c|v|i/[s/]<host>/…`)
@@ -270,7 +290,7 @@
   restored after process death can't revert them. All editor keys together stay under 64 KB of Parcel bytes (UTF-16); an
   existing schedule's starting point is re-read from the database instead of being stored; draft writes are debounced
   (250 ms). The website field is Compose snapshot state written synchronously. The bulk-paste dialog keeps at most 64,000
-  characters; bulk and CSV parsing run on `Dispatchers.Default`; the rule list shows 50 rows at a time ("Show more").
+  characters, cut back to the last line break (review round 3, minor 7); bulk and CSV parsing run on `Dispatchers.Default`; the rule list shows 50 rows at a time ("Show more").
 - **Start now on an Off schedule** says it stays on (and can't be turned off while Strict Mode locks editing).
 - **Strict form, non-SCHEDULES methods:** "Allow only selected" schedules are listed as "locked too" (with "Settings is blocked
   while they run" under BLOCK_SETTINGS) instead of "Not covered".

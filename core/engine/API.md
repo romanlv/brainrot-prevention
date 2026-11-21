@@ -116,9 +116,11 @@ HOURLY_RESET, BEFORE_START, LIMIT_WARNING. Schedule with `setExactAndAllowWhileI
 ## Strict Mode (`StrictPolicy`)
 - `checkActivation(StrictActivation(method, options, durationMs?, pin?, cooldownMin?, followAllSchedules), StrictFacts(
   accessibilityConnected, usageAccessGranted, inAccessibilityShortcut, adminActive), schedules, currentRow, quickBlock):
-  ActivationRefusal?` — pass the Quick Block: SCHEDULES + LOCK_EDITING is refused (`UNBOUNDED_FOLLOWED`) while a followed
-  item is unbounded (`isUnbounded(schedule|quickBlock)`, `unboundedFollowed`); while ON, `EditGuard.checkSchedule` /
-  `checkQuickBlock` refuse starting one (`Refusal.UNBOUNDED_UNDER_STRICT`).
+  ActivationRefusal?` — pass the Quick Block: SCHEDULES + LOCK_EDITING is refused (`UNBOUNDED_FOLLOWED`) while the followed
+  items together leave no free run of `MIN_FREE_GAP_MS` (10 min) in the week (`followedLockIn(row, schedules, quickBlock)`,
+  the union of `lockCoverage(schedule|quickBlock)`; `hasFreeGap(bits)`; single items: `isUnbounded`, `unboundedFollowed`).
+  While ON, `EditGuard.checkSchedule(…, quickBlock)` / `checkQuickBlock` refuse an edit that makes a followed item
+  unbounded or closes the last free run (`Refusal.UNBOUNDED_UNDER_STRICT`); pass the current Quick Block to `checkSchedule`.
 - `activate(req, facts, schedules, currentRow, wallNow, elapsedNow): ActivationResult.Activated(row) | Refused(reason)`.
 - `followed(row, schedules): FollowedSet`, `notCovered(schedules)` (ALLOWLIST ids), `pausedOrOff(schedules, now)`,
   `displayState(row, schedules, statusesById)`.

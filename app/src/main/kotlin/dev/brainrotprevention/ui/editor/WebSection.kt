@@ -312,8 +312,9 @@ private fun BulkPasteDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = {
-                        cut = it.length > EditorOps.MAX_PASTE_CHARS
-                        text = if (cut) it.take(EditorOps.MAX_PASTE_CHARS) else it
+                        val capped = EditorOps.capPaste(it)
+                        cut = capped != null
+                        text = capped ?: it
                     },
                     minLines = 5,
                     maxLines = 10,
@@ -324,7 +325,7 @@ private fun BulkPasteDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 )
                 if (cut) {
                     Text(
-                        "That list is too long to paste; only the start was kept. Use Import CSV for long lists.",
+                        "That list is too long to paste; only the lines at the start were kept. Use Import CSV for long lists.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.testTag("bulk_cut"),

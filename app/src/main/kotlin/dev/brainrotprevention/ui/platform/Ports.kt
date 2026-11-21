@@ -38,8 +38,28 @@ data class UiHealth(
     val restrictedInstall: Boolean = false,
     val advancedProtection: Boolean = false,
     val settingsLockedByStrict: Boolean = false,
+    /** The accessibility service is enabled and within its bind grace (a cold start): not "off" yet. */
+    val accessibilityStarting: Boolean = false,
 ) {
     val ok: Boolean get() = items.filter { it.required }.all { it.granted }
+
+    /**
+     * Nothing is enforced: the accessibility service (outside its bind grace) or usage access is missing. Other
+     * required grants (location for Wi-Fi/location triggers) only stop those triggers (review round 3, minor 5).
+     */
+    val enforcementMissing: UiGrant?
+        get() = ENFORCEMENT.firstOrNull { g ->
+            val item = get(g) ?: return@firstOrNull false
+            item.required && !item.granted && !(g == UiGrant.ACCESSIBILITY && accessibilityStarting)
+        }
+
+    /** Wi-Fi/location triggers exist but can't be checked (a location grant is missing). */
+    val triggersUnchecked: Boolean
+        get() = items.any { it.required && !it.granted && (it.grant == UiGrant.LOCATION_FINE || it.grant == UiGrant.LOCATION_BACKGROUND) }
+
+    private companion object {
+        val ENFORCEMENT = listOf(UiGrant.ACCESSIBILITY, UiGrant.USAGE_ACCESS)
+    }
 
     operator fun get(grant: UiGrant): UiGrantStatus? = items.firstOrNull { it.grant == grant }
 }

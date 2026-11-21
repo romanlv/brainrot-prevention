@@ -66,7 +66,8 @@ class ScheduleRepository internal constructor(private val c: DataCore) {
         } else {
             (g.schedules.firstOrNull { it.id == n.id } ?: return@write WriteResult.NotFound("schedule ${n.id}"))
         }
-        WriteResult.locked(EditGuard.checkSchedule(g.strict, g.display, g.schedules, old, n, g.now))?.let { return@write it }
+        val check = EditGuard.checkSchedule(g.strict, g.display, g.schedules, old, n, g.now, g.snapshot.quickBlock)
+        WriteResult.locked(check)?.let { return@write it }
         WriteResult.Ok(c.tx { writeSchedule(n, old, g.now) })
     }
 
@@ -170,7 +171,8 @@ class ScheduleRepository internal constructor(private val c: DataCore) {
         write: suspend (GuardContext) -> Unit,
     ): WriteResult<Unit> = c.write { g ->
         val s = g.schedules.firstOrNull { it.id == id } ?: return@write WriteResult.NotFound("schedule $id")
-        WriteResult.locked(EditGuard.checkSchedule(g.strict, g.display, g.schedules, s, change(s), g.now))?.let { return@write it }
+        val check = EditGuard.checkSchedule(g.strict, g.display, g.schedules, s, change(s), g.now, g.snapshot.quickBlock)
+        WriteResult.locked(check)?.let { return@write it }
         write(g)
         WriteResult.ok()
     }

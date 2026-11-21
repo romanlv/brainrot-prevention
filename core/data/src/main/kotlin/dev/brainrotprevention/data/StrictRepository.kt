@@ -4,6 +4,7 @@ import dev.brainrotprevention.data.db.EmergencyUnblockEntity
 import dev.brainrotprevention.data.db.toEntity
 import dev.brainrotprevention.data.db.toModel
 import dev.brainrotprevention.engine.EditGuard
+import dev.brainrotprevention.engine.Refusal
 import dev.brainrotprevention.engine.StrictPolicy
 import dev.brainrotprevention.engine.TamperCheck
 import dev.brainrotprevention.engine.ValidationError
@@ -29,9 +30,20 @@ class StrictRepository internal constructor(private val c: DataCore) {
 
     suspend fun getEmergencyLog(): List<EmergencyUnblock> = dao.getEmergencyLog().map { it.toModel() }
 
-    /** A user edit of the row (extend TIMER, follow all). While ON, EditGuard.checkStrict restricts it. */
+    /**
+     * A user edit of the row (extend TIMER, follow all). While ON, EditGuard.checkStrict restricts it. Under SCHEDULES
+     * with LOCK_EDITING, turning on follow-all is refused (`UNBOUNDED_UNDER_STRICT`) when the newly followed items
+     * would leave no free run of `StrictPolicy.MIN_FREE_GAP_MS` in the week (review round 3, minor 2).
+     */
     suspend fun edit(new: StrictModeRow): WriteResult<Unit> = c.write { g ->
         WriteResult.locked(EditGuard.checkStrict(g.strict, new))?.let { return@write it }
+        val qb = g.snapshot.quickBlock
+        if (StrictPolicy.locksUnbounded(new) &&
+            StrictPolicy.followedLockIn(new, g.schedules, qb) &&
+            !(StrictPolicy.locksUnbounded(g.strict) && StrictPolicy.followedLockIn(g.strict, g.schedules, qb))
+        ) {
+            return@write WriteResult.Locked(Refusal.UNBOUNDED_UNDER_STRICT)
+        }
         dao.upsert(new.toEntity())
         WriteResult.ok()
     }

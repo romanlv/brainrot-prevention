@@ -216,7 +216,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             runCatching { service.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val entry = snapshot.browsers.firstOrNull { it.packageName == pkg }
             var how = if (Build.VERSION.SDK_INT >= 30 && entry?.canEditUrl != false && entry != null) {
-                if (rewrite(pkg, wid, entry, uri.toString()) && rewriteLanded(pkg, wid, entry)) "URL_REWRITE" else null
+                if (rewrite(pkg, wid, entry, uri.toString(), p.target.url) && rewriteLanded(pkg, wid, entry)) "URL_REWRITE" else null
             } else {
                 null
             }
@@ -233,10 +233,19 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     }
 
     @RequiresApi(30)
-    private suspend fun rewrite(pkg: String, windowId: Int, entry: dev.brainrotprevention.model.BrowserEntry, text: String): Boolean {
-        // The window the blocked URL was read in (review round 2, adversarial 3), not the first window of the browser.
+    private suspend fun rewrite(
+        pkg: String,
+        windowId: Int,
+        entry: dev.brainrotprevention.model.BrowserEntry,
+        text: String,
+        blockedUrl: String,
+    ): Boolean {
+        // The window the blocked URL was read in (review round 2, adversarial 3), not the first window of the browser,
+        // and the bar that shows it when the window has several (review round 3, minor 4).
         val root = service.urlReader.rootFor(pkg, windowId) ?: return false
-        val node = service.urlReader.find(root, pkg, entry)?.first ?: return false
+        val bar = service.urlReader.find(root, pkg, entry, showing = blockedUrl) ?: return false
+        val barIndex = service.urlReader.findAll(root, pkg, entry).indexOfFirst { it.first == bar.first }
+        val node = bar.first
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         val deadline = SystemTimeAndroid.elapsedRealtime() + 300
@@ -245,7 +254,8 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             if (node.isFocused) break
             delay(30)
         }
-        val fresh = service.urlReader.rootFor(pkg, windowId)?.let { service.urlReader.find(it, pkg, entry)?.first } ?: node
+        val fresh = service.urlReader.rootFor(pkg, windowId)
+            ?.let { service.urlReader.findAll(it, pkg, entry).getOrNull(barIndex)?.first } ?: node
         fresh.refresh()
         val actions = fresh.actionList.map { it.id }
         val imeEnter = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
@@ -264,8 +274,8 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         val prefix = g.packages.redirectUriPrefix.lowercase()
         val deadline = SystemTimeAndroid.elapsedRealtime() + 1_000
         while (SystemTimeAndroid.elapsedRealtime() < deadline) {
-            val t = service.urlReader.peek(pkg, entry, windowId)?.lowercase()
-            if (t != null && (t.startsWith(prefix) || t == "about:blank")) return true
+            val texts = service.urlReader.peek(pkg, entry, windowId).map { it.lowercase() }
+            if (texts.any { it.startsWith(prefix) || it == "about:blank" }) return true
             delay(100)
         }
         return false

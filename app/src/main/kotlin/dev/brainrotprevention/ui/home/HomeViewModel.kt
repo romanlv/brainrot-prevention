@@ -45,13 +45,23 @@ data class HomeState(
     val health: UiHealth = UiHealth(),
 ) {
     /**
-     * Nothing is enforced: the accessibility service isn't connected or a required grant is missing (review round 2,
-     * adversarial 6). Home then shows "Blocking is off" instead of "Blocking now".
+     * Nothing is enforced: the accessibility service isn't connected (after its bind grace) or usage access is missing
+     * (review round 2, adversarial 6; round 3, minor 5). Home then shows "Blocking is off" instead of "Blocking now".
+     * A missing location grant only stops Wi-Fi/location triggers: see [triggersUnchecked].
      */
-    val blockingOff: Boolean get() = health.items.isNotEmpty() && !health.ok
+    val blockingOff: Boolean get() = missingGrant != null
 
-    /** The first missing required grant (the banner's Fix button). */
-    val missingGrant: UiGrant? get() = health.items.firstOrNull { it.required && !it.granted }?.grant
+    /** The missing grant that turns blocking off (the banner's Fix button). */
+    val missingGrant: UiGrant? get() = health.enforcementMissing
+
+    /** Wi-Fi/location triggers can't be checked (a location grant is missing); everything else is enforced. */
+    val triggersUnchecked: Boolean get() = !blockingOff && health.triggersUnchecked
+
+    /** The missing location grant (the smaller notice's Fix button). */
+    val missingTriggerGrant: UiGrant?
+        get() = health.items.firstOrNull {
+            it.required && !it.granted && (it.grant == UiGrant.LOCATION_FINE || it.grant == UiGrant.LOCATION_BACKGROUND)
+        }?.grant
 
     val qbStatus: ScheduleStatus? get() = statuses[QUICK_BLOCK_ID]
 
@@ -124,7 +134,7 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
 
     /** Opens the fix screen for the banner's missing grant ("Locked by Strict Mode" when the Settings guard is on). */
     fun fixBlocking(activity: android.app.Activity) {
-        val grant = state.value.missingGrant ?: return
+        val grant = state.value.missingGrant ?: state.value.missingTriggerGrant ?: return
         val r = runCatching { deps.platform.health.open(activity, grant) }.getOrDefault(FixResult.UNAVAILABLE)
         if (r ==
             FixResult.LOCKED_BY_STRICT

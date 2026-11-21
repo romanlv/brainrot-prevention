@@ -35,6 +35,7 @@ object PlatformPorts {
                     restrictedInstall = r.restrictedInstall,
                     advancedProtection = r.advancedProtection,
                     settingsLockedByStrict = r.settingsLockedByStrict,
+                    accessibilityStarting = r.accessibilityStarting,
                 )
             }
 
