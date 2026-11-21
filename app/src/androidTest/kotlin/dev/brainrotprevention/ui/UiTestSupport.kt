@@ -3,6 +3,10 @@ package dev.brainrotprevention.ui
 import android.app.Activity
 import android.graphics.drawable.Drawable
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -207,4 +211,14 @@ fun ComposeContentTestRule.tap(tag: String): SemanticsNodeInteraction {
 fun ComposeContentTestRule.scrollTap(tag: String): SemanticsNodeInteraction {
     waitForTag(tag)
     return onNodeWithTag(tag).performScrollTo().performClick()
+}
+
+/**
+ * Asserts that the window/container tagged [tag] (a dialog root: its text lives on child nodes, it doesn't merge them)
+ * shows a text node containing [text].
+ */
+fun ComposeContentTestRule.assertTextInside(tag: String, text: String): SemanticsNodeInteraction {
+    waitForTag(tag)
+    return onNode(hasAnyAncestor(hasTestTag(tag)) and hasText(text, substring = true), useUnmergedTree = true)
+        .assertIsDisplayed()
 }

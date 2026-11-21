@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.brainrotprevention.platform.ServiceRebind
 import dev.brainrotprevention.platform.platform
 import dev.brainrotprevention.testing.Milestone
 import dev.brainrotprevention.testing.NoGrant
@@ -17,6 +18,7 @@ import dev.brainrotprevention.ui.platform.UiHealth
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,9 @@ import org.junit.runner.RunWith
 class OnboardingGrantedTest {
     @get:Rule val rule = createComposeRule()
     private val env = TestEnv()
+
+    /** `am instrument` force-stopped the app, which leaves the granted service unbound until it is rebound. */
+    @Before fun setUp() = assertTrue("accessibility service not connected", ServiceRebind.ensure(env.context.platform))
 
     @After fun tearDown() = env.close()
 

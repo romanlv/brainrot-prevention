@@ -3,7 +3,7 @@
 Copied from SPEC.md §15 (`../SPEC.md`). The spec is the source of truth. Event, tag and debug-command contracts for the scenarios are in `scripts/e2e/TAGS.md`.
 
 1. **Start every session with `scripts/doctor.sh`.** If it isn't ok, fix the environment first. Never change app code because of an `infra` failure.
-2. **Work milestone by milestone (§16)** and record the current one in `build/verify/milestone`.
+2. **Work milestone by milestone (§16)** and record the current one in `scripts/milestone` (tracked; a missing file fails `verify.sh` and `run.sh`).
 3. **Write or extend the `core:engine` tests first**, from the rules in §5–9. Implement until G1 is green.
 4. **Wire the Android side** and add or extend the scenario for the item.
 5. **Run `scripts/verify.sh`**, and when it's green, `scripts/verify.sh --device`.

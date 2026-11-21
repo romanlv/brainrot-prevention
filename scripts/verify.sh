@@ -4,6 +4,8 @@
 # scripts/verify.sh --full        + qa build (R8) S1/S8 smoke, release manifest check (brp28, S12b, S17: open)
 # scripts/verify.sh --only S5     a single gate (G0…G4) or scenario (S1…S16); comma-separated for several
 #                   --repeat N    repeat scenarios N times;  --keep-going  don't stop at the first failing gate
+#                   --new-lint-baseline  let G0 re-create app/lint-baseline.xml (otherwise a missing baseline fails)
+# The milestone (SPEC §16) is read from scripts/milestone; a missing file fails the run.
 # One verdict: build/verify/report.json (SPEC §14.9), written atomically; complete:false until the end.
 set -euo pipefail
 LIB_NO_RESULT=1
@@ -19,6 +21,7 @@ FULL=0
 ONLY=""
 REPEAT=1
 KEEP_GOING=0
+NEW_BASELINE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --device) DEVICE=1; shift ;;
@@ -26,7 +29,8 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${ONLY:+$ONLY,}$2"; shift 2 ;;
     --repeat) REPEAT=$2; shift 2 ;;
     --keep-going) KEEP_GOING=1; shift ;;
-    -h | --help) sed -n '2,8p' "$0"; exit 0 ;;
+    --new-lint-baseline) NEW_BASELINE=1; shift ;;
+    -h | --help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "verify.sh: unknown argument $1" >&2; exit 64 ;;
   esac
 done
@@ -43,7 +47,8 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${COMMIT:0:4}"
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 COLD=true
 pgrep -f GradleDaemon >/dev/null 2>&1 && COLD=false
-MILESTONE=$(tr -d ' \n\r' <"$VDIR/milestone" 2>/dev/null || echo M0)
+MILESTONE_ERR=""
+MILESTONE=$(read_milestone 2>"$VDIR/.milestone.err") || { MILESTONE=none; MILESTONE_ERR=$(cat "$VDIR/.milestone.err"); }
 MNUM=${MILESTONE#M}
 
 # ---- plan ------------------------------------------------------------------------------------
@@ -75,7 +80,9 @@ ENV_JSON=$(jq -cn \
   --arg image "android-37.0;google_apis;arm64-v8a r$(sed -n 's/^Pkg.Revision=//p' "$ANDROID_HOME/system-images/android-37.0/google_apis/arm64-v8a/source.properties" 2>/dev/null)" \
   --arg emulator "$(sed -n 's/^Pkg.Revision=//p' "$ANDROID_HOME/emulator/source.properties" 2>/dev/null)" \
   --arg serial "$ANDROID_SERIAL" --argjson cold "$COLD" --arg milestone "$MILESTONE" \
-  '{java:$java,agp:$agp,gradle:$gradle,kotlin:$kotlin,image:$image,emulator:$emulator,serial:$serial,cold:$cold,milestone:$milestone}')
+  --arg allow_physical "${ALLOW_PHYSICAL:-}" \
+  '{java:$java,agp:$agp,gradle:$gradle,kotlin:$kotlin,image:$image,emulator:$emulator,serial:$serial,cold:$cold,milestone:$milestone,
+    allow_physical:($allow_physical == "1")}')
 
 write_report() { # write_report <complete true|false>
   local complete=$1 finished=""
@@ -118,6 +125,15 @@ trap finalize EXIT
 trap 'exit 130' INT TERM
 
 add_gate() { printf '%s\n' "$1" | jq -c . >>"$GATES"; }
+
+if [ "${ALLOW_PHYSICAL:-}" = 1 ]; then
+  echo "verify.sh: WARNING: ALLOW_PHYSICAL=1 is set; the adb shim's emulator checks are off (recorded in report env)" >&2
+fi
+if [ -n "$MILESTONE_ERR" ]; then
+  echo "verify.sh: $MILESTONE_ERR" >&2
+  add_gate "$(jq -n --arg msg "$MILESTONE_ERR" '{id: "milestone", ok: false, ms: 0, kind: "build", message: $msg}')"
+  exit 1
+fi
 
 # ---- helpers ---------------------------------------------------------------------------------
 cap() { # cap <budget seconds> -> 3x budget (x3 again on a cold run)
@@ -169,27 +185,40 @@ junit_summary() {
     print JSON::PP->new->canonical->encode({ tests => $tests, failed_tests => \@failed });' "$@"
 }
 
-# instr_summary <am-instrument -r output> -> same shape as junit_summary (+ "crashed")
+# instr_summary <am-instrument -r output> -> same shape as junit_summary, plus:
+#   names (every started class#method), finished (tests with a terminal status), result_code
+#   (INSTRUMENTATION_CODE or null), reported (N from "OK (N tests)" / "Tests run: N", or null),
+#   crashed, complete (code -1, a summary line whose N equals the started tests, every test finished, no crash)
 instr_summary() {
   perl -MJSON::PP -e '
-    local $/; my $x = <STDIN>; my ($tests, @failed, %st, $key) = (0);
+    local $/; my $x = <STDIN>; my ($tests, $finished, @failed, @names, %st, $key, $code) = (0, 0);
     for my $line (split /\n/, $x) {
       $line =~ s/\r$//;
       if ($line =~ /^INSTRUMENTATION_STATUS: (\w+)=(.*)$/) { $key = $1; $st{$key} = $2; next }
       if ($line =~ /^INSTRUMENTATION_STATUS_CODE: (-?\d+)/) {
         my $c = $1;
-        $tests++ if $c == 1;
+        if ($c == 1) { $tests++; push @names, ($st{class} // "?") . "#" . ($st{test} // "?") }
+        else { $finished++ }
         if ($c == -1 || $c == -2) {
           my @l = split /\n/, ($st{stack} // ""); my $d = join("\n", @l[0 .. ($#l < 19 ? $#l : 19)]);
           push @failed, { test => ($st{class} // "?") . "#" . ($st{test} // "?"), detail => $d };
         }
         %st = (); $key = undef; next;
       }
-      if ($line =~ /^INSTRUMENTATION_(RESULT|CODE)/) { $key = undef; next }
+      if ($line =~ /^INSTRUMENTATION_CODE: (-?\d+)/) { $code = $1; $key = undef; next }
+      if ($line =~ /^INSTRUMENTATION_RESULT/) { $key = undef; next }
       $st{$key} .= "\n$line" if defined $key;
     }
-    my $crashed = ($x =~ /INSTRUMENTATION_FAILED|Process crashed|INSTRUMENTATION_ABORTED/) ? JSON::PP::true : JSON::PP::false;
-    print JSON::PP->new->canonical->encode({ tests => $tests, failed_tests => \@failed, crashed => $crashed });'
+    my $reported;
+    $reported = $1 if $x =~ /^OK \((\d+) tests?\)/m;
+    $reported = $1 if !defined $reported && $x =~ /^Tests run: (\d+)/m;
+    my $crashed = ($x =~ /INSTRUMENTATION_FAILED|Process crashed|INSTRUMENTATION_ABORTED|adb-shim: REFUSED/) ? 1 : 0;
+    my $complete = (defined $code && $code == -1 && defined $reported && $reported == $tests
+                    && $finished == $tests && !$crashed) ? 1 : 0;
+    print JSON::PP->new->canonical->encode({ tests => $tests, finished => $finished, failed_tests => \@failed,
+      names => \@names, result_code => (defined $code ? $code + 0 : undef),
+      reported => (defined $reported ? $reported + 0 : undef),
+      crashed => ($crashed ? JSON::PP::true : JSON::PP::false), complete => ($complete ? JSON::PP::true : JSON::PP::false) });'
 }
 
 kover_line_ratio() { # kover_line_ratio <report.xml> -> ratio or empty
@@ -208,11 +237,22 @@ gate_G0() {
   mkdir -p "$dir"
   log="$dir/gradle.log"
   t0=$(now_ms)
-  gradle "$(cap 120)" "$log" --continue lint ktlintCheck || rc=$?
-  if [ "$rc" != 0 ] && grep -q "Created baseline file" "$log"; then
-    echo "verify.sh: G0 lint baseline created; re-running lint once" >&2
-    rc=0
+  local baseline="$ROOT/app/lint-baseline.xml" baseline_msg=""
+  if [ ! -f "$baseline" ] && [ "$NEW_BASELINE" != 1 ]; then
+    # lint would silently write a new baseline that absorbs every current issue
+    baseline_msg="app/lint-baseline.xml is missing; restore it (git checkout) or re-create it deliberately with --new-lint-baseline"
+    rc=1
+    : >"$log"
+  else
     gradle "$(cap 120)" "$log" --continue lint ktlintCheck || rc=$?
+    if [ "$rc" != 0 ] && grep -q "Created baseline file" "$log" && [ "$NEW_BASELINE" = 1 ]; then
+      echo "verify.sh: G0 lint baseline created (--new-lint-baseline); re-running lint once" >&2
+      rc=0
+      gradle "$(cap 120)" "$log" --continue lint ktlintCheck || rc=$?
+    elif grep -q "Created baseline file" "$log"; then
+      baseline_msg="lint created a new baseline file; that needs --new-lint-baseline"
+      [ "$rc" = 0 ] && rc=1
+    fi
   fi
   local forbidden
   forbidden=$(cd "$ROOT" && git grep --untracked -nE 'System\.currentTimeMillis|Instant\.now|ZonedDateTime\.now|LocalDateTime\.now' \
@@ -223,6 +263,8 @@ gate_G0() {
     ok=false
     kind=$(classify_gradle "$log" "$rc")
     msg=$(first_errors "$log")
+    [ -n "$baseline_msg" ] && { kind=build; msg="$baseline_msg${msg:+
+$msg}"; }
   fi
   if [ -n "$forbidden" ]; then
     ok=false
@@ -323,11 +365,19 @@ device_prep() { # boots brp37, builds every APK, installs + grants. Sets PREP_KI
 
 # ---- G3: instrumentation ---------------------------------------------------------------------
 TEST_RUNNER="$PKG.test/androidx.test.runner.AndroidJUnitRunner"
-instrument() { # instrument <log> [am instrument -e args...]
-  local log=$1
+instrument() { # instrument <log> [am instrument -e args...] -> the adb exit code (142 timeout, 97 refused)
+  local log=$1 rc=0
   shift
   ADB_TIMEOUT=$(cap 480) ashell am instrument -w -r -e milestone "$MILESTONE" \
-    -e filter dev.brainrotprevention.testing.MilestoneFilter "$@" "$TEST_RUNNER" >"$log" 2>&1 || true
+    -e filter dev.brainrotprevention.testing.MilestoneFilter "$@" "$TEST_RUNNER" >"$log" 2>&1 || rc=$?
+  return "$rc"
+}
+# plan_tests <log> [-e args...]: dry run (-e log true) -> the instr_summary of the tests a pass will run
+plan_tests() {
+  local log=$1 rc=0
+  shift
+  ADB_TIMEOUT=120 ashell am instrument -w -r -e log true "$@" "$TEST_RUNNER" >"$log" 2>&1 || rc=$?
+  return "$rc"
 }
 
 gate_G3_once() {
@@ -344,9 +394,28 @@ gate_G3_once() {
       '{id: "G3", ok: true, ms: $ms, tests: 0, failed_tests: [], note: ("no instrumentation tests below M3 (milestone " + $m + "); built, installed, granted")}')"
     return 0
   fi
+  # plan: dry runs with and without the milestone filter, so the gate lists what the filter drops
+  local mf=(-e milestone "$MILESTONE" -e filter dev.brainrotprevention.testing.MilestoneFilter)
+  local prc=0
+  plan_tests "$dir/plan-nogrant.txt" "${mf[@]}" -e annotation dev.brainrotprevention.testing.NoGrant || prc=$?
+  plan_tests "$dir/plan-grant.txt" "${mf[@]}" -e notAnnotation dev.brainrotprevention.testing.NoGrant || prc=$?
+  plan_tests "$dir/plan-all.txt" || prc=$?
+  local p1 p2 pall
+  p1=$(instr_summary <"$dir/plan-nogrant.txt")
+  p2=$(instr_summary <"$dir/plan-grant.txt")
+  pall=$(instr_summary <"$dir/plan-all.txt")
+  if [ "$prc" != 0 ] || [ "$(jq -n --argjson a "$p1" --argjson b "$p2" --argjson c "$pall" '$a.complete and $b.complete and $c.complete')" != true ]; then
+    local pk=test
+    [ "$prc" = "$EXIT_TIMEOUT" ] && pk=timeout
+    { [ "$prc" = "$EXIT_REFUSED" ] || ! device_ok; } && pk=infra
+    add_gate "$(jq -n --arg kind "$pk" --argjson ms $(($(now_ms) - t0)) --arg rc "$prc" \
+      '{id: "G3", ok: false, ms: $ms, kind: $kind, message: ("the dry run (-e log true) that plans the tests did not complete (rc=" + $rc + "); see build/verify/G3/plan-*.txt"), tests: 0, failed_tests: []}')"
+    return 1
+  fi
   # order: ungrant -> no-grant class -> grant -> service connected -> the rest (SPEC §14.4)
   OUT="$VDIR/ungrant" "$ROOT/scripts/e2e/ungrant.sh" >"$dir/ungrant.log" 2>&1 || true
-  instrument "$dir/instrument-nogrant.txt" -e annotation dev.brainrotprevention.testing.NoGrant
+  local rc1=0 rc2=0
+  instrument "$dir/instrument-nogrant.txt" -e annotation dev.brainrotprevention.testing.NoGrant || rc1=$?
   local rc=0
   SKIP_INSTALL=1 OUT="$VDIR/grant" "$ROOT/scripts/e2e/grant.sh" >"$dir/grant2.log" 2>&1 || rc=$?
   if [ "$rc" != 0 ]; then
@@ -354,24 +423,46 @@ gate_G3_once() {
       '{id: "G3", ok: false, ms: $ms, kind: "infra", message: $msg, tests: 0, failed_tests: []}')"
     return 1
   fi
-  instrument "$dir/instrument.txt" -e notAnnotation dev.brainrotprevention.testing.NoGrant
+  instrument "$dir/instrument.txt" -e notAnnotation dev.brainrotprevention.testing.NoGrant || rc2=$?
   # am instrument force-stops the app; Android then marks the accessibility service as crashed and doesn't
   # rebind it. Re-grant so G4 starts with the service connected.
   SKIP_INSTALL=1 OUT="$VDIR/grant" "$ROOT/scripts/e2e/grant.sh" >"$dir/grant3.log" 2>&1 || true
   local s1 s2
   s1=$(instr_summary <"$dir/instrument-nogrant.txt")
   s2=$(instr_summary <"$dir/instrument.txt")
-  local ok kind="" msg=""
-  ok=$(jq -n --argjson a "$s1" --argjson b "$s2" '($a.failed_tests + $b.failed_tests | length) == 0 and ($a.crashed | not) and ($b.crashed | not)')
-  if [ "$ok" != true ]; then
+  # verdict: both passes exited 0, ran to completion (code -1, summary line, every test finished), ran exactly the
+  # planned tests, and nothing failed; from M3 the granted pass must plan at least one test
+  local problems
+  problems=$(jq -rn --argjson a "$s1" --argjson b "$s2" --argjson pa "$p1" --argjson pb "$p2" \
+    --argjson rc1 "$rc1" --argjson rc2 "$rc2" --argjson mnum "$MNUM" '
+    def pass($n; $s; $p; $rc):
+      (if $rc != 0 then ["\($n): am instrument exited \($rc)"] else [] end)
+      + (if $s.complete then [] else ["\($n): incomplete run (code \($s.result_code), summary \($s.reported), started \($s.tests), finished \($s.finished), crashed \($s.crashed))"] end)
+      + (if ($s.names | sort) != ($p.names | sort) then ["\($n): ran \($s.tests) tests, planned \($p.tests)"] else [] end);
+    pass("no-grant"; $a; $pa; $rc1) + pass("granted"; $b; $pb; $rc2)
+    + (if $mnum >= 3 and $pb.tests == 0 then ["granted: 0 tests planned at M\($mnum)"] else [] end)
+    | .[]')
+  local ok=true kind="" msg=""
+  local nfail
+  nfail=$(jq -n --argjson a "$s1" --argjson b "$s2" '$a.failed_tests + $b.failed_tests | length')
+  if [ -n "$problems" ] || [ "$nfail" != 0 ]; then
+    ok=false
     kind=test
-    device_ok || kind=infra
-    msg=$(grep -hE 'INSTRUMENTATION_FAILED|Process crashed|FAILURES!!!|Error' "$dir/instrument-nogrant.txt" "$dir/instrument.txt" | head -n 10 || true)
+    if [ "$rc1" = "$EXIT_TIMEOUT" ] || [ "$rc2" = "$EXIT_TIMEOUT" ]; then kind=timeout; fi
+    if [ "$rc1" = "$EXIT_REFUSED" ] || [ "$rc2" = "$EXIT_REFUSED" ] || ! device_ok; then kind=infra; fi
+    msg=$(
+      printf '%s\n' "$problems"
+      grep -hE 'INSTRUMENTATION_FAILED|Process crashed|FAILURES!!!|adb-shim' "$dir/instrument-nogrant.txt" "$dir/instrument.txt" | head -n 10 || true
+    )
   fi
   add_gate "$(jq -n --argjson ok "$ok" --arg kind "$kind" --arg msg "$msg" --argjson ms $(($(now_ms) - t0)) \
-    --argjson a "$s1" --argjson b "$s2" '
-    {id: "G3", ok: $ok, ms: $ms, tests: ($a.tests + $b.tests), failed_tests: ($a.failed_tests + $b.failed_tests),
-     log: "build/verify/G3/instrument.txt"}
+    --argjson a "$s1" --argjson b "$s2" --argjson pa "$p1" --argjson pb "$p2" --argjson pall "$pall" --arg m "$MILESTONE" '
+    (($pa.names + $pb.names) | sort) as $planned
+    | {id: "G3", ok: $ok, ms: $ms, milestone: $m,
+       planned: ($pa.tests + $pb.tests), planned_nogrant: $pa.tests, planned_granted: $pb.tests,
+       filtered_out: ($pall.names - $planned), filtered_out_count: (($pall.names - $planned) | length),
+       tests: ($a.tests + $b.tests), failed_tests: ($a.failed_tests + $b.failed_tests),
+       log: "build/verify/G3/instrument.txt"}
     + (if $ok then {} else {kind: $kind, message: $msg} end)')"
   [ "$ok" = true ]
 }
@@ -411,19 +502,30 @@ gate_G4() {
   [ "$KEEP_GOING" = 1 ] && args+=(--keep-going)
   with_timeout $(($(cap 1500) * REPEAT)) "$ROOT/scripts/e2e/run.sh" "${args[@]}" ${SCEN_IDS[@]+"${SCEN_IDS[@]}"} \
     >"$VDIR/g4.log" 2>&1 || rc=$?
-  local scen='[]'
+  local scen='[]' planned='[]'
   [ -s "$VDIR/g4.json" ] && scen=$(jq -c . "$VDIR/g4.json")
+  [ -f "$VDIR/g4.json.planned" ] && planned=$(jq -Rsc 'split("\n") | map(select(. != ""))' "$VDIR/g4.json.planned")
   local ok=true kind="" msg=""
   if [ "$rc" != 0 ]; then
     ok=false
     if [ "$rc" = "$EXIT_TIMEOUT" ]; then kind=timeout; msg="G4 exceeded its cap"; else
       kind=$(printf '%s' "$scen" | jq -r '[.[] | select(.ok != true) | .kind] | first // "test"')
       msg=$(printf '%s' "$scen" | jq -r '[.[] | select(.ok != true) | "\(.id): \(.message // "")"] | join("; ")')
+      [ -n "$msg" ] || msg="run.sh exited $rc; see build/verify/g4.log"
     fi
+  else
+    # a green run.sh must have run every planned scenario, and from M3 it must plan at least one
+    local why
+    why=$(jq -rn --argjson s "$scen" --argjson p "$planned" --argjson mnum "$MNUM" '
+      if $mnum >= 3 and ($p | length) == 0 then "0 scenarios planned at M\($mnum)"
+      elif ($s | map(.id) | sort) != ($p | sort) then "ran \($s | map(.id)), planned \($p)"
+      else empty end')
+    if [ -n "$why" ]; then ok=false; kind=test; msg=$why; fi
   fi
   add_gate "$(jq -n --argjson ok "$ok" --arg kind "$kind" --arg msg "$msg" --argjson ms $(($(now_ms) - t0)) \
-    --argjson scen "$scen" --arg log "build/verify/g4.log" '
-    {id: "G4", ok: $ok, ms: $ms, scenarios: $scen, log: $log}
+    --argjson scen "$scen" --argjson planned "$planned" --arg m "$MILESTONE" --arg log "build/verify/g4.log" '
+    {id: "G4", ok: $ok, ms: $ms, milestone: $m, planned: $planned, planned_count: ($planned | length),
+     passed_count: ($scen | map(select(.ok == true)) | length), scenarios: $scen, log: $log}
     + (if $ok then {} else {kind: $kind, message: $msg} end)')"
   [ "$ok" = true ] || gate_fail_stop
 }

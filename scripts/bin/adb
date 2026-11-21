@@ -4,8 +4,11 @@
 # - refuses kill-server, usb, tcpip, connect, reconnect, pair
 # - checks ro.kernel.qemu / ro.boot.qemu == 1 before every device command
 # - caps every call with a timeout (30 s; 300 s for install/boot; none for streaming logcat)
-# ALLOW_PHYSICAL=1 disables the checks (only when the user explicitly asks in the conversation).
+# ALLOW_PHYSICAL=1 disables the checks (only when the user explicitly asks in the conversation); it is logged.
 set -euo pipefail
+
+# Only the default local adb server: a redirected server could front another machine's devices.
+unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_PORT ANDROID_ADB_SERVER_ADDRESS
 
 REAL="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}/platform-tools/adb"
 EMU_SERIAL=emulator-5554
@@ -16,7 +19,10 @@ with_timeout() { perl -e 'alarm shift; exec @ARGV or die "exec failed: $!\n"' "$
 
 [ -x "$REAL" ] || refuse "real adb not found at $REAL"
 
-if [ "${ALLOW_PHYSICAL:-}" = 1 ]; then exec "$REAL" "$@"; fi
+if [ "${ALLOW_PHYSICAL:-}" = 1 ]; then
+  echo "adb-shim: WARNING: ALLOW_PHYSICAL=1, device checks are off: adb $*" >&2
+  exec "$REAL" "$@"
+fi
 
 [ "${ANDROID_SERIAL:-}" = "$EMU_SERIAL" ] || refuse "ANDROID_SERIAL must be $EMU_SERIAL (is '${ANDROID_SERIAL:-}')"
 
@@ -63,7 +69,8 @@ esac
 
 if [ "$host_cmd" = 0 ]; then
   q=$(with_timeout 10 "$REAL" -s "$EMU_SERIAL" shell 'echo "$(getprop ro.kernel.qemu)$(getprop ro.boot.qemu)"' </dev/null 2>/dev/null | tr -d '\r' || true)
-  case "$q" in *1*) ;; *) refuse "target $EMU_SERIAL is not reachable or not an emulator (qemu='$q')" ;; esac
+  # ro.kernel.qemu and/or ro.boot.qemu are exactly "1" on the emulator: "1" (one set) or "11" (both)
+  case "$q" in 1 | 11) ;; *) refuse "target $EMU_SERIAL is not reachable or not an emulator (qemu='$q')" ;; esac
 fi
 
 if [ "$cap" = 0 ]; then

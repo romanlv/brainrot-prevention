@@ -5,6 +5,7 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.Intents.intended
 import androidx.test.espresso.intent.Intents.intending
@@ -51,10 +52,14 @@ class BackupSafTest {
         rule.show(env, Routes.SETTINGS)
         rule.scrollTap("backup_export")
         rule.waitUntil(10_000) { file.length() > 0 }
+        // The "exported" notice is a dialog window holding focus; Espresso's intended() waits for the activity
+        // root to have window focus, so dismiss the notice first.
+        rule.waitForTag("notice_dialog")
+        rule.tap("notice_ok")
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("notice_dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
         intended(allOf(hasAction(Intent.ACTION_CREATE_DOCUMENT), hasExtra(Intent.EXTRA_TITLE, "brainrot-prevention-2026-11-23.json")))
         val backup = BackupCodec.decode(file.readText())
         assertEquals(listOf("Focus", "Evening"), backup.schedules.map { it.name })
-        rule.waitForTag("notice_dialog")
     }
 
     @Test

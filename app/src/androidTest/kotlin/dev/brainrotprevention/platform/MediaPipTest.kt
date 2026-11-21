@@ -81,7 +81,11 @@ class MediaPipTest {
     private fun state(): Int? = controller()?.playbackState?.state
 
     private fun startPip(vararg extras: Pair<String, Boolean>) {
-        val i = Intent().setClassName(TARGET, "$TARGET.PipActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // CLEAR_TASK: the fixture's task may still sit in Recents with MainActivity at its root (force-stop keeps
+        // tasks). PipActivity would then join it, and entering PiP would bring MainActivity full screen — a real,
+        // correctly blocked full-screen window, not the PiP-only case under test.
+        val i = Intent().setClassName(TARGET, "$TARGET.PipActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         for ((k, v) in extras) i.putExtra(k, v)
         ctx.startActivity(i)
     }

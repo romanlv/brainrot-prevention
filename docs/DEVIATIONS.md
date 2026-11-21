@@ -20,6 +20,22 @@
   the no-grant class is selected by the `dev.brainrotprevention.testing.NoGrant` annotation (contract in
   `scripts/e2e/TAGS.md`). Below M3, G3 builds, installs and grants only, because §16 has no G3 tests before M3.
 - **G4 without explicit ids runs the scenarios of every milestone up to the current one** (from the §16 table).
+- **The milestone lives in `scripts/milestone` (tracked), not `build/verify/milestone`:** a gitignored file vanished on a
+  fresh clone or `rm -rf build`, and the old `|| echo M0` fallback then turned `--device` into a green run of 0 tests and
+  0 scenarios. A missing or malformed file now fails `verify.sh` (gate `milestone`) and an id-less `run.sh`.
+- **G3 verdict (review round 1, harness 16/17):** before the real passes, G3 dry-runs (`-e log true`) both passes with
+  the milestone filter and once without it; the gate reports `planned`, `planned_nogrant`, `planned_granted` and
+  `filtered_out` (the tests the milestone filter drops). A pass counts only when `am instrument` exited 0 (142 = timeout,
+  97 = adb shim refusal = infra), the output ends with `INSTRUMENTATION_CODE: -1` and an `OK (N tests)` / `Tests run: N`
+  line whose N equals the started tests, every started test has a terminal status, and the started tests are exactly the
+  planned ones. From M3 the granted pass must plan at least one test. G4 reports `milestone`, `planned` and
+  `passed_count`, and fails when run.sh ran other scenarios than it planned or planned none at M3+.
+- **G0 never re-creates `app/lint-baseline.xml` on its own:** a missing baseline fails G0 unless `--new-lint-baseline`
+  is passed (otherwise the new baseline would absorb every current issue).
+- **Negative scenario assertions** (`assert_no_event`) fail as infra when jq fails (a broken filter); lines that aren't
+  JSON objects are skipped (`select(type == "object")`) instead of stopping jq.
+- **Teardown:** a failed `ctl reset` after a scenario triggers `emu.sh reset` + `grant.sh`; the result records
+  `teardown_failed`, and the scenario fails (infra) when that recovery fails too.
 - **`grant.sh` installs before `step grant`.** The mark needs the app to be installed. The grants that depend
   on undeclared permissions are best-effort, so they don't abort M0–M2. `SKIP_SERVICE_WAIT=1` skips the
   "a11y service connected" assert while the service doesn't exist yet.

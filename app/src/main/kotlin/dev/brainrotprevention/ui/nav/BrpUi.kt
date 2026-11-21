@@ -48,8 +48,10 @@ import dev.brainrotprevention.ui.onboarding.OnboardingScreen
 import dev.brainrotprevention.ui.settings.SettingsScreen
 import dev.brainrotprevention.ui.strict.StrictScreen
 import dev.brainrotprevention.ui.theme.BrpTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object Routes {
     const val HOME = "home"
@@ -167,8 +169,11 @@ private fun AppNav(deps: UiDeps, nav: NavHostController, start: String) {
                 OnboardingScreen(deps) { template, openEditor ->
                     scope.launch {
                         deps.graph.settings.setOnboardingDone(true)
-                        nav.navigate(Routes.HOME) { popUpTo(Routes.ONBOARDING) { inclusive = true } }
-                        if (openEditor) nav.navigate(Routes.editor(0, template, blank = template == null))
+                        // NavController must be driven from the main thread; the write may resume elsewhere
+                        withContext(Dispatchers.Main.immediate) {
+                            nav.navigate(Routes.HOME) { popUpTo(Routes.ONBOARDING) { inclusive = true } }
+                            if (openEditor) nav.navigate(Routes.editor(0, template, blank = template == null))
+                        }
                     }
                 }
             }

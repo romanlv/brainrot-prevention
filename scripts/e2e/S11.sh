@@ -25,12 +25,15 @@ driver_tap "schedule_menu_$NAME"
 driver_tap menu_delete
 driver_wait locked_by_strict 5000
 go_home
+ctl_state "$OUT/state-after-delete.json" | jq -e --arg n "$NAME" '[.config.schedules[] | select(.name == $n)] | length == 1' >/dev/null ||
+  fail_test "schedule $NAME is gone after the refused delete" '.config.schedules[] | select(.name == "Strictly")'
 
 step uninstall-guard
 ashell am start -a android.intent.action.DELETE -d "package:$PKG" >/dev/null 2>&1 || true
 assert_event '.ev=="decision" and .result=="BLOCK" and has_reason("STRICT_UNINSTALL")' 3
 sleep_s 1
 top=$(top_package)
+[ -n "$top" ] || fail_test "could not read the top package (dumpsys activity activities has no resumed activity)"
 case "$top" in *packageinstaller*) fail_test "the package installer is on top ($top)" ;; esac
 
 step settings-guard

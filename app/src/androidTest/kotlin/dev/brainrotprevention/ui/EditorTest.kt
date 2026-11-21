@@ -234,7 +234,7 @@ class EditorTest {
         type("web_input", "https://reddit.com/r/all")
         rule.scrollTap("editor_save")
         rule.waitForTag("notice_dialog")
-        rule.onNodeWithTag("notice_dialog", useUnmergedTree = true).assertTextContains("has a path", substring = true)
+        rule.assertTextInside("notice_dialog", "has a path")
         assertTrue(env.schedules().isEmpty())
     }
 
@@ -246,7 +246,7 @@ class EditorTest {
         type("editor_name", "Nothing")
         rule.scrollTap("editor_save")
         rule.waitForTag("notice_dialog")
-        rule.onNodeWithTag("notice_dialog", useUnmergedTree = true).assertTextContains("Add at least one app or site", substring = true)
+        rule.assertTextInside("notice_dialog", "Add at least one app or site")
         assertTrue(rule.onAllNodesWithTag("always_prompt", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
         assertTrue(env.schedules().isEmpty())
     }

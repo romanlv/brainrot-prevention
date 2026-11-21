@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # scripts/e2e/run.sh [--repeat N] [--keep-going] [--json <file>] [S1 S2 …]   (SPEC §14.8, §14.9, §15)
 # Runs E2E scenarios on emulator-5554. Without ids: every scenario at or below the current
-# milestone (build/verify/milestone). Each attempt: ctl reset + fresh seed + new log collector,
+# milestone (scripts/milestone; missing = error). Each attempt: ctl reset + fresh seed + new log collector,
 # per-scenario cap, artefacts in build/verify/<Sx>/. An infra failure triggers emu.sh reset +
 # grant.sh and one retry ("retried":true). Writes a JSON array of scenario results to --json
-# (default build/verify/g4.json). Exit 0 when all passed.
+# (default build/verify/g4.json) and the planned ids to <json>.planned. Exit 0 when all passed.
+# A teardown (ctl reset) that fails and whose emu.sh reset + grant.sh also fails fails the scenario
+# ("teardown_failed":true): the next scenario could start with Strict Mode or the device admin still on.
 set -euo pipefail
 LIB_NO_RESULT=1
 OUT=${OUT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/build/verify/run}
@@ -27,10 +29,9 @@ while [ $# -gt 0 ]; do
 done
 
 # milestone -> scenarios (SPEC §16)
-milestone_num() { local m; m=$(cat "$ROOT/build/verify/milestone" 2>/dev/null | tr -d ' \n\r' || true); m=${m#M}; echo "${m:-0}"; }
 scenarios_upto() {
   local n=$1 m s
-  for m in 3 4 5 6 7 8; do
+  for m in 3 4 5 6 7 8 9; do
     [ "$m" -le "$n" ] || continue
     case $m in
       3) s="S1 S16" ;;
@@ -39,25 +40,30 @@ scenarios_upto() {
       6) s="S8 S9 S15" ;;
       7) s="S10 S14" ;;
       8) s="S11 S12" ;;
+      9) s="" ;;
     esac
     echo "$s"
   done | tr ' ' '\n' | { grep . || true; } | sort -t S -k2 -n | tr '\n' ' '
 }
 cap_for() { case $1 in S13) echo 300 ;; S11) echo 120 ;; *) echo 60 ;; esac; }
 
-if [ ${#IDS[@]} -eq 0 ]; then
-  # shellcheck disable=SC2207
-  IDS=($(scenarios_upto "$(milestone_num)"))
-fi
 mkdir -p "$(dirname "$JSON")"
 RESULTS="$JSON.parts"
 : >"$RESULTS"
-
+: >"$JSON.planned"
 if [ ${#IDS[@]} -eq 0 ]; then
-  echo "run.sh: no scenarios at milestone M$(milestone_num)" >&2
-  echo '[]' >"$JSON"
-  exit 0
+  MILESTONE=$(read_milestone) || { echo '[]' >"$JSON"; exit 64; }
+  MNUM=${MILESTONE#M}
+  # shellcheck disable=SC2207
+  IDS=($(scenarios_upto "$MNUM"))
+  if [ ${#IDS[@]} -eq 0 ]; then
+    echo "run.sh: no scenarios at milestone $MILESTONE" >&2
+    echo '[]' >"$JSON"
+    [ "$MNUM" -lt 3 ] && exit 0
+    exit 1
+  fi
 fi
+printf '%s\n' "${IDS[@]}" >"$JSON.planned"
 
 ensure_device() {
   device_ok || "$ROOT/scripts/emu.sh" up || return 3
@@ -80,6 +86,23 @@ teardown() {
 hard_reset() {
   echo "run.sh: emu.sh reset + grant.sh" >&2
   "$ROOT/scripts/emu.sh" reset && OUT="$ROOT/build/verify/grant" "$ROOT/scripts/e2e/grant.sh"
+}
+
+# after_attempt <Sx>: teardown; if it fails, emu.sh reset + grant.sh; record it in the result, and fail the
+# attempt (kind infra) when the hard reset fails too.
+after_attempt() {
+  local id=$1 f="$ROOT/build/verify/$1/result.json"
+  teardown && return 0
+  echo "run.sh: $id teardown failed" >&2
+  if hard_reset; then
+    jq '. + {teardown_failed: true, teardown_recovered: true}' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+  else
+    jq '. + {teardown_failed: true, teardown_recovered: false}
+        | if .ok then .ok = false | .kind = "infra" | .message = "passed, but teardown and emu.sh reset failed" else . end' \
+      "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+    A_OK=false
+    A_KIND=infra
+  fi
 }
 
 # run_attempt <Sx> -> sets A_OK A_KIND A_MS; result in build/verify/<Sx>/result.json
@@ -128,7 +151,7 @@ for id in "${IDS[@]}"; do
       attempts=$((attempts + 1))
       echo "run.sh: $id (repeat $rep/$REPEAT, attempt $attempts)" >&2
       run_attempt "$id"
-      teardown || hard_reset || true
+      after_attempt "$id"
     fi
     total_ms=$((total_ms + A_MS))
     if [ "$A_OK" != true ] && [ "$A_KIND" = infra ] && [ "$retried" = false ]; then
@@ -137,7 +160,7 @@ for id in "${IDS[@]}"; do
       attempts=$((attempts + 1))
       echo "run.sh: $id infra failure; retrying once" >&2
       run_attempt "$id"
-      teardown || true
+      after_attempt "$id"
       total_ms=$((total_ms + A_MS))
     fi
     if [ "$A_OK" != true ]; then

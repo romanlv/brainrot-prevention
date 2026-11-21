@@ -21,7 +21,7 @@ assert_event '.ev=="notif_posted" and .kind=="PAUSE_END"' 2
 
 step pause-over
 clock_advance 61000
-assert_event '.ev=="alarm_fired"' 2
+assert_event '.ev=="alarm_fired" and .kind=="PAUSE_END"' 2
 launch "$T_MAIN"
 assert_event "blocked(\"$T\")" 1.5
 pass

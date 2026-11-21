@@ -82,3 +82,7 @@ Both runs pass `-e filter dev.brainrotprevention.testing.MilestoneFilter -e mile
 `InstrumentationRegistry.getArguments()`. It keeps tests whose `@Milestone("Mx")` (on the method or the class) is
 at or below that milestone. The `NoGrant`, `Milestone` and `MilestoneFilter` classes belong in an androidTest
 dependency, for example `testing/fixtures`. Below M3, G3 builds, installs and grants only.
+
+Before the two passes, `verify.sh` plans them with dry runs (`am instrument -w -r -e log true`, same filter arguments,
+plus one run without the filter to list what it drops). The real passes must start exactly the planned tests and finish
+with `INSTRUMENTATION_CODE: -1` and an `OK (N tests)` / `Tests run: N` line. The milestone comes from `scripts/milestone`.

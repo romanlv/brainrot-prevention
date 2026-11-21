@@ -51,10 +51,7 @@ class StrictUiTest {
         rule.waitForTag("locked_by_strict")
         rule.onNodeWithTag("locked_by_strict", useUnmergedTree = true).assertIsDisplayed()
         // The dialog names the unlock condition: TIMER 1 h from T0 → "ends in 1 h (11:00)".
-        rule.onNodeWithTag(
-            "locked_by_strict",
-            useUnmergedTree = true
-        ).assertTextContains("Strict Mode ends in 1 h (11:00).", substring = true)
+        rule.assertTextInside("locked_by_strict", "Strict Mode ends in 1 h (11:00).")
         assertEquals(listOf("Strictly"), env.schedules().map { it.name })
     }
 
@@ -110,7 +107,7 @@ class StrictUiTest {
         rule.show(env, Routes.SETTINGS)
         rule.scrollTap("health_fix_notification_listener")
         rule.waitForTag("locked_by_strict")
-        rule.onNodeWithTag("locked_by_strict", useUnmergedTree = true).assertTextContains("Strict Mode ends in 1 h", substring = true)
+        rule.assertTextInside("locked_by_strict", "Strict Mode ends in 1 h")
         assertTrue("nothing may be opened while the guard is active", env.health.opened.isEmpty())
     }
 
@@ -204,7 +201,7 @@ class StrictUiTest {
         rule.waitUntil(10_000) { !runBlocking { env.graph.strict.get() }.isOn }
         assertEquals(listOf(T0), runBlocking { env.graph.strict.getEmergencyLog() }.map { it.at })
         rule.waitForTag("notice_dialog")
-        rule.onNodeWithTag("notice_dialog", useUnmergedTree = true).assertTextContains("available again in 30 days", substring = true)
+        rule.assertTextInside("notice_dialog", "available again in 30 days")
         rule.tap("notice_ok")
         rule.waitForTag("strict_activate")
 

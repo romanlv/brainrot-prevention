@@ -57,6 +57,22 @@ EXIT_INFRA=3
 EXIT_TIMEOUT=142 # perl alarm (SIGALRM = 14, 128+14)
 EXIT_REFUSED=97  # scripts/bin/adb refused the call
 
+# ---- milestone (SPEC §16): tracked in scripts/milestone ------------------------------------
+MILESTONE_FILE="$ROOT/scripts/milestone"
+# read_milestone -> "M<n>" on stdout; fails (rc 1, message on stderr) when the file is missing or malformed
+read_milestone() {
+  local m
+  if [ ! -f "$MILESTONE_FILE" ]; then
+    echo "milestone file scripts/milestone is missing (it holds the current §16 milestone, e.g. M9)" >&2
+    return 1
+  fi
+  m=$(tr -d ' \n\r' <"$MILESTONE_FILE")
+  case "$m" in
+    M[0-9]) echo "$m" ;;
+    *) echo "scripts/milestone must hold M0…M9, holds '$m'" >&2; return 1 ;;
+  esac
+}
+
 # ---- basics ---------------------------------------------------------------------------------
 with_timeout() { perl -e 'alarm shift; exec @ARGV or die "exec failed: $!\n"' "$@"; }
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
@@ -142,7 +158,7 @@ _on_err() {
   local rc=$1 line=$2 cmd=$3
   trap - ERR
   if [ "$rc" = "$EXIT_TIMEOUT" ]; then _fail timeout "$EXIT_TIMEOUT" "command timed out (line $line): $cmd"; fi
-  if [ "$rc" = "$EXIT_REFUSED" ] || ! device_ok; then _fail infra "$EXIT_INFRA" "device unavailable (rc=$rc, line $line): $cmd"; fi
+  if [ "$rc" = "$EXIT_INFRA" ] || [ "$rc" = "$EXIT_REFUSED" ] || ! device_ok; then _fail infra "$EXIT_INFRA" "device unavailable (rc=$rc, line $line): $cmd"; fi
   _fail test "$EXIT_TEST" "command failed (rc=$rc, line $line): $cmd"
 }
 
@@ -308,28 +324,38 @@ events_since_step() {
     sed -n "/\"ev\":\"mark\",\"id\":\"$STEP\"/,\$p" "$OUT/brp.jsonl"
   fi
 }
-# matching events since the step, compact JSON, one per line
-events_matching() { events_since_step | jq -cR "$JQ_DEFS fromjson? | select($1)" 2>/dev/null || true; }
+# match_events <jq-filter>: matching events since the step (compact JSON, one per line) into $OUT/.match.
+# Lines that aren't JSON objects are skipped. A jq error (a broken filter) is an infra failure, never "no match".
+# Call it in the scenario's own shell (not in $(…) or a pipeline), so the failure ends the scenario.
+match_events() {
+  local rc=0
+  events_since_step | jq -cR "$JQ_DEFS fromjson? | select(type == \"object\") | select($1)" >"$OUT/.match" 2>"$OUT/.jqerr" || rc=$?
+  [ "$rc" = 0 ] || fail_infra "jq filter failed (rc=$rc): $1: $(head -c 300 "$OUT/.jqerr")"
+}
+# has_events <jq-filter>: true when at least one event matches
+has_events() { match_events "$1"; [ -s "$OUT/.match" ]; }
+# matching events (stdout). In $(…) a broken filter still exits non-zero (rc 3), which _on_err reports as infra.
+events_matching() { match_events "$1"; cat "$OUT/.match"; }
 
 # assert_event <jq-filter> <seconds (may be fractional)>
 assert_event() {
   local d=$(($(now_ms) + $(awk "BEGIN{printf \"%d\", $2 * 1000}")))
   while [ "$(now_ms)" -lt "$d" ]; do
-    events_matching "$1" | grep -q . && return 0
+    has_events "$1" && return 0
     sleep_s 0.2
   done
-  events_matching "$1" | grep -q . && return 0
+  has_events "$1" && return 0
   fail_test "$1 within $2 s" "$1" "$2"
 }
 # assert_no_event <jq-filter> <seconds>: waits the full window, then checks
 assert_no_event() {
   sleep_s "$2"
-  if events_matching "$1" | grep -q .; then
-    fail_test "unexpected event: $(events_matching "$1" | head -n 1)" "not($1)" "$2"
+  if has_events "$1"; then
+    fail_test "unexpected event: $(head -n 1 "$OUT/.match")" "not($1)" "$2"
   fi
 }
 # last matching event (JSON) or empty
-last_event() { events_matching "$1" | tail -n 1; }
+last_event() { match_events "$1"; tail -n 1 "$OUT/.match"; }
 
 # ---- common assertions ----------------------------------------------------------------------
 # assert_allowed <pkg> [seconds]: no BLOCK decision for pkg and it stays on top
@@ -417,7 +443,7 @@ quick_block_assertions() {
   launch "$T_PIP" --ez enterPip true
   assert_event "blocked(\"$T\")" 3
   sleep_s 2
-  if ! events_matching '.ev=="overlay" and .state=="shown"' | grep -q .; then
+  if ! has_events '.ev=="overlay" and .state=="shown"'; then
     if adb shell dumpsys activity activities | tr -d '\r' | grep -ci 'windowingMode=pinned\|mode=pinned' >/dev/null; then
       fail_test "PiP window still visible and not covered by the overlay" '.ev=="overlay" and .state=="shown"' 2
     fi

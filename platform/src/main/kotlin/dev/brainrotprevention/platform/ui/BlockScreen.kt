@@ -1,6 +1,7 @@
 package dev.brainrotprevention.platform.ui
 
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -127,11 +128,16 @@ fun BlockScreen(model: BlockModel, actions: BlockActions, modifier: Modifier = M
                     }
                 }
                 Text(model.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Blocked", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    "Blocked",
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() },
+                )
                 Text(model.blockedBy, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
                 if (model.chips.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                        model.chips.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
+                        model.chips.forEach { ReasonLabel(it) }
                     }
                 }
                 model.untilLine?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
@@ -177,5 +183,22 @@ fun BlockScreen(model: BlockModel, actions: BlockActions, modifier: Modifier = M
                 }
             }
         }
+    }
+}
+
+/** A reason shown as a chip-styled label: plain text for TalkBack, not a button (it has no action). */
+@Composable
+private fun ReasonLabel(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
     }
 }

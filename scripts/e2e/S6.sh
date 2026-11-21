@@ -34,7 +34,8 @@ launch "$T_MAIN"
 go_home
 clock_advance 10000
 launch "$T_MAIN"
-sleep_s 1.5
+# a late second count must not slip in: no used>=2 for a few seconds, then the last usage is used==1
+assert_no_event '.ev=="usage" and .used>=2' 4
 last=$(last_event '.ev=="usage"')
 [ -n "$last" ] || fail_test "no usage event after two launches" '.ev=="usage"' 1.5
 [ "$(printf '%s' "$last" | jq '.used')" = 1 ] || fail_test "expected usage used==1, got: $last" '.ev=="usage" and .used==1' 1.5
