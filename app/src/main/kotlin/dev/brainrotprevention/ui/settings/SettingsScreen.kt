@@ -69,6 +69,7 @@ fun SettingsScreen(deps: UiDeps, contentPadding: PaddingValues) {
     val unsupported by vm.unsupported.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val pendingImport by vm.pendingImport.collectAsStateWithLifecycle()
+    val xKeepFollowing by vm.xKeepFollowing.collectAsStateWithLifecycle()
     var howStrong by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope { dev.brainrotprevention.ui.UiGuard.handler }
@@ -246,6 +247,15 @@ fun SettingsScreen(deps: UiDeps, contentPadding: PaddingValues) {
                     }
                 }
             }
+        }
+        Section("Experimental", subtitle = "Try these out; switch them off if they misbehave. They aren't saved in backups.") {
+            SwitchRow(
+                "X: keep Home on Following",
+                xKeepFollowing,
+                vm::setXKeepFollowing,
+                tag = "pref_x_following",
+                subtitle = "When X's Home opens on \"For you\", taps \"Following\" for you. Search, profiles and messages are left alone.",
+            )
         }
         Section("Backup", subtitle = "Saves schedules, Quick Block items and settings to a file you choose. Nothing is uploaded.") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

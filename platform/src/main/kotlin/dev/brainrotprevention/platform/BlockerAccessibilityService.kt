@@ -23,6 +23,7 @@ import dev.brainrotprevention.model.WebTarget
 import dev.brainrotprevention.platform.enforce.BrowserUrlReader
 import dev.brainrotprevention.platform.enforce.Enforcer
 import dev.brainrotprevention.platform.enforce.ForegroundSource
+import dev.brainrotprevention.platform.enforce.XFollowingGuard
 import dev.brainrotprevention.platform.log.Brp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,6 +44,8 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
     internal lateinit var foreground: ForegroundSource
     internal lateinit var urlReader: BrowserUrlReader
     private lateinit var enforcer: Enforcer
+    private lateinit var xGuard: XFollowingGuard
+    private var xPrefJob: Job? = null
     private var pollJob: Job? = null
     private var receiversRegistered = false
     private var browserMap: Map<String, BrowserEntry> = emptyMap()
@@ -57,6 +60,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         foreground = ForegroundSource(this)
         urlReader = BrowserUrlReader(this) { browsers() }
         enforcer = Enforcer(this, g)
+        xGuard = XFollowingGuard(this)
     }
 
     private fun browsers(): Map<String, BrowserEntry> {
@@ -84,6 +88,8 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
             g.engineHost.requestEvaluate("service-connected")
         }
         startPolling()
+        xPrefJob?.cancel()
+        xPrefJob = g.scope.launch { g.data.settings.xKeepFollowing.collect { xGuard.enabled = it } }
     }
 
     private fun startPolling() {
@@ -118,6 +124,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
                 g.engineHost.requestEvaluate("hint")
             }
         }
+        if (pkg == XFollowingGuard.X_PKG) guarded("x-following") { xGuard.onEvent(e) }
         if (pkg in browsers()) {
             if (urlReader.onEvent(e)) g.engineHost.requestEvaluate("url")
         }
@@ -153,6 +160,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         override fun onReceive(context: Context, intent: Intent) {
             val pkg = intent.data?.schemeSpecificPart
             Brp.event("package", "action" to intent.action, "pkg" to pkg)
+            if (pkg == XFollowingGuard.X_PKG) xGuard.invalidateLabels()
             g.scope.launch {
                 g.packages.refresh("package")
                 g.engineHost.requestEvaluate("package")
@@ -165,6 +173,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
 
         private fun onSystem(intent: Intent) {
             when (intent.action) {
+                Intent.ACTION_LOCALE_CHANGED -> xGuard.invalidateLabels()
                 Intent.ACTION_SCREEN_OFF -> {
                     urlReader.clear()
                     g.engineHost.requestEvaluate("screen-off")
@@ -204,6 +213,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
             addAction(Intent.ACTION_SHUTDOWN)
+            addAction(Intent.ACTION_LOCALE_CHANGED)
         }
         ContextCompat.registerReceiver(this, systemReceiver, sysFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiversRegistered = true
@@ -219,6 +229,8 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
     private fun disconnect() {
         if (g.service !== this) return
         pollJob?.cancel()
+        xPrefJob?.cancel()
+        xGuard.enabled = false
         unregisterReceivers()
         enforcer.release("service-stop")
         g.service = null

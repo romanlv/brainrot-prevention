@@ -19,6 +19,11 @@ class SettingsRepository internal constructor(private val c: DataCore) {
 
     val lastPackageSnapshot: Flow<Set<String>> = c.prefs.lastPackageSnapshot
 
+    /** Experimental "X: keep on Following" switch. Freely switchable, also during Strict Mode. */
+    val xKeepFollowing: Flow<Boolean> = c.prefs.xKeepFollowing
+
+    suspend fun setXKeepFollowing(on: Boolean) = c.prefs.setXKeepFollowing(on)
+
     suspend fun getPrefs(): Prefs = c.prefs.get()
 
     suspend fun getExcludedBrowsers(): Set<String> = c.db.excludedBrowsers().getAll().mapTo(LinkedHashSet()) { it.packageName }

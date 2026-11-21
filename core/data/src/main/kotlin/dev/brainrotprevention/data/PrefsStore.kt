@@ -24,11 +24,19 @@ class PrefsStore(private val store: DataStore<Preferences>) {
         val hidePauseOption = booleanPreferencesKey("hidePauseOption")
         val onboardingDone = booleanPreferencesKey("onboardingDone")
         val lastPackageSnapshot = stringSetPreferencesKey("lastPackageSnapshot")
+        val xKeepFollowing = booleanPreferencesKey("xKeepFollowing")
     }
 
     val prefs: Flow<Prefs> = store.data.map { it.toPrefs() }.distinctUntilChanged()
 
     val lastPackageSnapshot: Flow<Set<String>> = store.data.map { it[K.lastPackageSnapshot] ?: emptySet() }.distinctUntilChanged()
+
+    /** Experimental: keep X's home on "Following" (not part of [Prefs] or backups). */
+    val xKeepFollowing: Flow<Boolean> = store.data.map { it[K.xKeepFollowing] ?: false }.distinctUntilChanged()
+
+    suspend fun setXKeepFollowing(on: Boolean) {
+        store.edit { it[K.xKeepFollowing] = on }
+    }
 
     suspend fun get(): Prefs = prefs.first()
 

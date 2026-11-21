@@ -44,6 +44,12 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
         emptySet()
     )
 
+    val xKeepFollowing: StateFlow<Boolean> = g.settings.xKeepFollowing.stateIn(safeScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setXKeepFollowing(on: Boolean) {
+        safeScope.launch { g.settings.setXKeepFollowing(on) }
+    }
+
     private val _health = MutableStateFlow(UiHealth())
     val health: StateFlow<UiHealth> = _health.asStateFlow()
 

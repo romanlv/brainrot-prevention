@@ -9,7 +9,7 @@ The signed release APK is `app/build/outputs/apk/release/app-release.apk`. A cop
 `scripts/release.sh`.
 
 1. Copy the APK to the phone, or install it from the Mac with
-   `$ANDROID_HOME/platform-tools/adb -s <serial> install dist/brainrot-prevention-1.0.1.apk`.
+   `$ANDROID_HOME/platform-tools/adb -s <serial> install dist/brainrot-prevention-1.0.2.apk`.
    The repo's `scripts/bin/adb` guard refuses physical devices on purpose, so use the SDK adb directly for this step.
 2. Open the app. The setup checklist asks for four things:
    - **Accessibility service.** This one is required. Because the app is sideloaded, Android 13+ greys the toggle out
@@ -39,6 +39,8 @@ their own screens. Turn off AppBlock's schedules (or its accessibility service) 
 - **Website blocking** works by reading the address bar of supported browsers: Chrome, Firefox, Edge, Brave, Samsung
   Internet, Opera, DuckDuckGo, Vivaldi and a few more. Browsers it can't read are blocked as apps while a schedule has
   website rules. To allow one, use "Not a browser? Allow" on its block screen (not available while Strict Mode is on).
+- **Experimental → "X: keep Home on Following"** (Settings): when X's Home opens on "For you", the app taps
+  "Following". Built from X 12.44's screen layout; if an X update breaks it, it just stops doing anything. Not in backups.
 - **Backup:** Settings → Backup exports and imports the configuration as JSON.
 
 ## Build and verify (for agents)
