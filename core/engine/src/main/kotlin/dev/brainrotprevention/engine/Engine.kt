@@ -251,6 +251,23 @@ class Engine {
         )
     }
 
+    /** Schedules hiding notifications in [statuses] (§10.4): the listener sweeps only when this set changes. */
+    fun notificationHidingIds(snapshot: ConfigSnapshot, statuses: List<ScheduleStatus>): Set<Long> =
+        NotificationPolicy.hidingIds(prepare(snapshot), statuses.associateBy { it.scheduleId })
+
+    /**
+     * Whether [pkg] would be blocked if it were in front, from the statuses of an evaluation (§10.2 step 1:
+     * media is re-paused "while the package stays blocked", also after it left the foreground). A LAUNCHES gate
+     * only refuses new launches, so it doesn't count here; the Settings/installer guards don't either.
+     */
+    fun backgroundBlock(snapshot: ConfigSnapshot, statuses: List<ScheduleStatus>, strict: StrictDisplayState, pkg: String): Decision {
+        val ctx = DecisionContext(prepare(snapshot), statuses.associateBy { it.scheduleId }, strict)
+        val d = DecisionMaker.decideApp(ctx, ForegroundApp(pkg))
+        if (d !is Decision.Block) return d
+        val reasons = d.reasons.filter { it.source != ReasonSource.StrictSettings && it.source != ReasonSource.StrictUninstall }
+        return Decision.of(reasons)
+    }
+
     /** Notification-hiding until for [pkg] (§10.4), from the statuses of the last evaluation. */
     fun notificationBlock(snapshot: ConfigSnapshot, statuses: List<ScheduleStatus>, pkg: String): Until? =
         NotificationPolicy.blockFor(prepare(snapshot), statuses.associateBy { it.scheduleId }, pkg)

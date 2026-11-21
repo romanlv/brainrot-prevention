@@ -1,5 +1,7 @@
 package dev.brainrotprevention.ui.common
 
+import android.graphics.drawable.Drawable
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -31,10 +33,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -50,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import dev.brainrotprevention.BuildConfig
 import dev.brainrotprevention.ui.LocalUiDeps
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Exposes test tags as resource ids (TAGS.md) on debug/qa builds. Apply on every composition root: the activity
@@ -192,11 +197,30 @@ fun ConfirmDialog(
     )
 }
 
+/** Small in-memory LRU of app icons; a missing icon is cached too, so it isn't looked up again on every scroll. */
+object AppIconCache {
+    private object None
+
+    private val cache = LruCache<String, Any>(256)
+
+    fun peek(pkg: String): ImageBitmap? = cache.get(pkg) as? ImageBitmap
+
+    suspend fun load(pkg: String, icon: (String) -> Drawable?): ImageBitmap? {
+        cache.get(pkg)?.let { return it as? ImageBitmap }
+        val b = withContext(Dispatchers.IO) { runCatching { icon(pkg)?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull() }
+        cache.put(pkg, b ?: None)
+        return b
+    }
+}
+
 /** The installed app's icon (from the platform), or a letter avatar. */
 @Composable
 fun AppIcon(pkg: String, label: String, size: Dp = 40.dp) {
     val apps = LocalUiDeps.current.platform.apps
-    val bitmap = remember(pkg) { runCatching { apps.icon(pkg)?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull() }
+    // PackageManager + bitmap work off the main thread (a picker can have hundreds of rows), cached by package.
+    val bitmap = produceState(AppIconCache.peek(pkg), pkg) {
+        if (value == null) value = AppIconCache.load(pkg) { apps.icon(it) }
+    }.value
     if (bitmap != null) {
         Image(bitmap, contentDescription = null, modifier = Modifier.size(size))
     } else {

@@ -133,7 +133,17 @@ class ModelTest {
         val text = json.encodeToString(ConfigSnapshot.serializer(), snap)
         assertTrue(text.contains("\"package\":\"com.android.chrome\""))
         assertEquals(snap, json.decodeFromString(ConfigSnapshot.serializer(), text))
-        assertEquals(listOf("com.android.settings", "com.miui.securitycenter", "com.samsung.android.lool"), StrictGuards().settings)
+        // The §9.3 list plus the OEM accessibility screens (DEVIATIONS.md).
+        assertEquals(
+            listOf(
+                "com.android.settings",
+                "com.miui.securitycenter",
+                "com.samsung.android.lool",
+                "com.samsung.accessibility",
+                "com.huawei.systemmanager"
+            ),
+            StrictGuards().settings,
+        )
     }
 
     private class FakeSystem(var wall: Long, var el: Long) : SystemTime {

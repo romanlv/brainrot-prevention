@@ -54,11 +54,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.brainrotprevention.engine.Refusal
 import dev.brainrotprevention.engine.ScheduleEvaluator
 import dev.brainrotprevention.engine.ScheduleStatus
 import dev.brainrotprevention.model.Schedule
@@ -100,6 +102,13 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = inner.calculateTopPadding() + 16.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                Text(
+                    "Brainrot Prevention",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.semantics { heading() },
+                )
+            }
             item { StatusCard(state) }
             item {
                 QuickBlockCard(
@@ -113,7 +122,9 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
                 Text(
                     "Schedules",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .semantics { heading() },
                 )
             }
             if (state.loaded && state.schedules.isEmpty()) {
@@ -135,9 +146,9 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
                     onResume = { vm.resume(s.id) },
                     onStop = { vm.stopNow(s.id) },
                     onStartNow = { startFor = s },
-                    onPause = { if (vm.isLocked(s.id)) vm.pauseFor(s.id, 15) else pauseFor = s },
+                    onPause = { if (vm.isLocked(s.id)) vm.showLocked(Refusal.PAUSED) else pauseFor = s },
                     onDuplicate = { vm.duplicate(s.id) },
-                    onDelete = { if (vm.isLocked(s.id)) vm.delete(s.id) else deleteFor = s },
+                    onDelete = { if (vm.isLocked(s.id)) vm.showLocked(Refusal.DELETED) else deleteFor = s },
                 )
             }
         }
@@ -155,7 +166,7 @@ fun HomeScreen(deps: UiDeps, onEdit: (Long) -> Unit, onNew: () -> Unit, onEditQu
         })
     }
     startFor?.let { s ->
-        StartNowSheet(s.name, onDismiss = { startFor = null }, onPick = {
+        StartNowSheet(s.name, alsoArms = startNowAlsoArms(s, state.now), onDismiss = { startFor = null }, onPick = {
             startFor = null
             vm.startNow(s.id, it)
         })
@@ -353,7 +364,8 @@ private fun ScheduleCard(
                     onCheckedChange = onToggle,
                     modifier = Modifier
                         .testTag("schedule_switch_${s.name}")
-                        .semantics { contentDescription = "${s.name} on" },
+                        // The switch announces its own on/off state; the label is just the schedule.
+                        .semantics { contentDescription = "${s.name} schedule" },
                 )
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.testTag("schedule_menu_${s.name}")) {

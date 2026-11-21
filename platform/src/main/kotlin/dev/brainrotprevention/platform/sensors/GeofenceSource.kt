@@ -24,6 +24,14 @@ import kotlinx.coroutines.launch
  * one `getCurrentLocation` to set `lastState`. Transitions arrive through [GeofenceReceiver].
  */
 class GeofenceSource internal constructor(private val app: Context, private val g: PlatformGraph) {
+    /**
+     * Why location triggers can't follow the device right now (null = registered or nothing to register):
+     * missing background location (geofencing needs it on API 29+) or the last `addGeofences` failure.
+     * Shown by the health check, because the error log is stripped in release builds.
+     */
+    @Volatile var problem: String? = null
+        private set
+
     private fun pendingIntent(): PendingIntent {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
         return PendingIntent.getBroadcast(app, 1, Intent(app, GeofenceReceiver::class.java), flags)
@@ -37,7 +45,21 @@ class GeofenceSource internal constructor(private val app: Context, private val 
                 val rows = g.data.schedules.getAll().filter { it.enabled }.flatMap { it.locations }.take(100)
                 val client = LocationServices.getGeofencingClient(app)
                 client.removeGeofences(pendingIntent())
-                if (rows.isEmpty() || !g.sensors.hasLocationPermission()) return@launch
+                if (rows.isEmpty()) {
+                    problem = null
+                    return@launch
+                }
+                if (!g.sensors.hasLocationPermission()) {
+                    problem = "location permission missing"
+                    return@launch
+                }
+                if (!hasBackgroundLocation()) {
+                    // addGeofences would fail with GEOFENCE_INSUFFICIENT_LOCATION_PERMISSION (1004).
+                    problem = "background location (\"Allow all the time\") missing"
+                    Brp.event("error", "where" to "geofence", "msg" to "no background location")
+                    g.health.refresh()
+                    return@launch
+                }
                 val fences = rows.map {
                     Geofence.Builder()
                         .setRequestId(it.id.toString())
@@ -51,7 +73,12 @@ class GeofenceSource internal constructor(private val app: Context, private val 
                     .addGeofences(fences)
                     .build()
                 client.addGeofences(req, pendingIntent())
-                    .addOnFailureListener { Brp.event("error", "where" to "geofence", "msg" to it.toString()) }
+                    .addOnSuccessListener { problem = null }
+                    .addOnFailureListener {
+                        problem = "geofences not registered: ${it.message ?: it.javaClass.simpleName}"
+                        Brp.event("error", "where" to "geofence", "msg" to it.toString())
+                        g.scope.launch { g.health.refresh() }
+                    }
                 LocationServices.getFusedLocationProviderClient(app)
                     .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
                     .addOnSuccessListener { loc -> if (loc != null) applyLocation(rows, loc) }
@@ -60,6 +87,11 @@ class GeofenceSource internal constructor(private val app: Context, private val 
             }
         }
     }
+
+    private fun hasBackgroundLocation(): Boolean =
+        Build.VERSION.SDK_INT < 29 ||
+            app.checkSelfPermission(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun applyLocation(rows: List<LocationCondition>, loc: Location) {
         g.scope.launch {

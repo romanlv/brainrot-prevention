@@ -53,6 +53,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     private val main = Handler(Looper.getMainLooper())
     private val lastEnforcedRt = HashMap<String, Long>()
     private val history = HashMap<String, ArrayDeque<Long>>()
+    private val lastPipRt = HashMap<String, Long>()
     private val mediaCallbacks = HashMap<MediaController, MediaController.Callback>()
 
     /** Main-thread state of the overlay. */
@@ -61,6 +62,8 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     private var redirectWorked = false
     private var continuousUntilGone: String? = null
     private var token = 0L
+    private var overlayGuard = false
+    private var guardShownRt = 0L
 
     val overlay = BlockOverlay(service, service, g.debug, this)
 
@@ -68,13 +71,20 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
 
     suspend fun apply(r: EvaluationResult, foreground: List<ForegroundApp>, snapshot: ConfigSnapshot) {
         val now = SystemTimeAndroid.elapsedRealtime()
-        val fgPkgs = foreground.map { it.packageName }.toSet()
+        // Packages with a full (non-PiP / non-floating) window in front.
+        val primary = foreground.filter { !it.secondary }.map { it.packageName }.toSet()
         val blockedPkgs = HashSet<String>()
         for ((pkg, d) in r.apps) {
             if (d !is Decision.Block) continue
             blockedPkgs += pkg
+            if (pkg !in primary) {
+                // Only a picture-in-picture window: pause media and cover it, but don't send HOME, show the
+                // full-screen block or count toward the loop rule (HOME can't remove a PiP window).
+                enforcePipOnly(pkg, now)
+                continue
+            }
             val last = lastEnforcedRt[pkg]
-            if (last != null && now - last < DEBOUNCE_MS) continue
+            if (last != null && now - last < debounceFor(d)) continue
             note(pkg, now)
             enforceApp(pkg, d, snapshot, r)
         }
@@ -88,8 +98,26 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             note(pkg, now)
             enforceWeb(p, d, snapshot, r)
         }
-        pauseMediaCallbacksCleanup(blockedPkgs)
-        main.post { housekeeping(fgPkgs, blockedPkgs) }
+        pauseMediaCallbacksCleanup()
+        main.post { housekeeping(primary, blockedPkgs) }
+    }
+
+    /**
+     * The Settings and installer guards re-enforce after [GUARD_DEBOUNCE_MS] (the RECENTS → HOME sequence plus
+     * one poll), not 1.5 s, and Close is refused for 1.5 s after a guard block: reopening Settings from Recents
+     * right after Close must not leave a window to reach a toggle.
+     */
+    private fun debounceFor(d: Decision.Block): Long =
+        if (d.reasons.any { it.source.isGuard }) GUARD_DEBOUNCE_MS else DEBOUNCE_MS
+
+    private val ReasonSource.isGuard: Boolean get() = this == ReasonSource.StrictSettings || this == ReasonSource.StrictUninstall
+
+    private fun enforcePipOnly(pkg: String, now: Long) {
+        val last = lastPipRt[pkg]
+        if (last != null && now - last < DEBOUNCE_MS) return
+        lastPipRt[pkg] = now
+        pauseMedia(pkg)
+        main.post { handlePip(pkg) }
     }
 
     private fun note(pkg: String, now: Long) {
@@ -115,7 +143,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
                 goHome()
             }
             Brp.event("enforced", "how" to "HOME", "target" to pkg)
-            showOverlay(pkg, model, web = false, redirect = false, reason = "app")
+            showOverlay(pkg, model, web = false, redirect = false, reason = "app", guard = d.reasons.any { it.source.isGuard })
             main.postDelayed({ handlePip(pkg) }, 300)
             main.postDelayed({ checkStuck(pkg) }, 1_000)
         }
@@ -155,8 +183,15 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
 
     private fun checkStuck(pkg: String) {
         if (overlayTarget != pkg) return
-        val still = service.foreground.current().any { it.packageName == pkg && !it.secondary }
-        val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+        g.scope.launch {
+            val still = service.foreground.current().any { it.packageName == pkg && !it.secondary }
+            val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+            main.post { markStuck(pkg, still, lockTask) }
+        }
+    }
+
+    private fun markStuck(pkg: String, still: Boolean, lockTask: Boolean) {
+        if (overlayTarget != pkg) return
         if (still || lockTask) {
             overlay.current?.let { overlay.update(it.copy(stuck = true)) }
             Brp.event("overlay", "state" to "stuck", "reason" to if (lockTask) "lock-task" else "still-foreground", "target" to pkg)
@@ -176,7 +211,7 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
             runCatching { service.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val entry = snapshot.browsers.firstOrNull { it.packageName == pkg }
             var how = if (Build.VERSION.SDK_INT >= 30 && entry?.canEditUrl != false && entry != null) {
-                if (rewrite(pkg, entry, uri.toString())) "URL_REWRITE" else null
+                if (rewrite(pkg, entry, uri.toString()) && rewriteLanded(pkg, entry)) "URL_REWRITE" else null
             } else {
                 null
             }
@@ -224,6 +259,22 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
         return fresh.performAction(imeEnter)
     }
 
+    /**
+     * After SET_TEXT + IME enter, the bar must show the blank page within a second. A browser that treated the
+     * typed `content://` URI as a search (or refused it) falls back to the intent redirect instead of
+     * reporting a rewrite that didn't happen.
+     */
+    private suspend fun rewriteLanded(pkg: String, entry: dev.brainrotprevention.model.BrowserEntry): Boolean {
+        val prefix = g.packages.redirectUriPrefix.lowercase()
+        val deadline = SystemTimeAndroid.elapsedRealtime() + 1_000
+        while (SystemTimeAndroid.elapsedRealtime() < deadline) {
+            val t = service.urlReader.peek(pkg, entry)?.lowercase()
+            if (t != null && (t.startsWith(prefix) || t == "about:blank")) return true
+            delay(100)
+        }
+        return false
+    }
+
     private fun viewIntent(pkg: String, uri: Uri): Boolean {
         val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "text/html").setPackage(pkg)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -238,47 +289,69 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
 
     // ---- overlay -----------------------------------------------------------------------------
 
-    private fun showOverlay(pkg: String, m: BlockModel, web: Boolean, redirect: Boolean, reason: String) {
+    private fun showOverlay(pkg: String, m: BlockModel, web: Boolean, redirect: Boolean, reason: String, guard: Boolean = false) {
         overlayTarget = pkg
         overlayWeb = web
         redirectWorked = redirect
-        overlay.show(m.copy(token = ++token), reason)
+        overlayGuard = guard
+        if (guard) guardShownRt = SystemTimeAndroid.elapsedRealtime()
+        overlay.show(m.copy(token = ++token, target = pkg), reason)
         Brp.event("enforced", "how" to "OVERLAY", "target" to pkg)
     }
 
-    private fun housekeeping(fg: Set<String>, blocked: Set<String>) {
+    private fun housekeeping(primary: Set<String>, blocked: Set<String>) {
         val c = continuousUntilGone
-        if (c != null && c !in fg) continuousUntilGone = null
-        // PiP covers: keep only for blocked packages that still have a PiP window.
+        // A package that is only in a PiP window has left the full screen: the loop rule is over.
+        if (c != null && c !in primary) continuousUntilGone = null
+        // PiP covers: keep (and follow the window) only for blocked packages that still have a PiP window.
         val keep = HashSet<String>()
-        for (pkg in blocked) for (w in pipWindows(pkg)) keep += "$pkg#${w.id}"
+        for (pkg in blocked) {
+            for (w in pipWindows(pkg)) {
+                val key = "$pkg#${w.id}"
+                keep += key
+                if (overlay.hasCover(key)) {
+                    val b = Rect()
+                    w.getBoundsInScreen(b)
+                    overlay.cover(key, b)
+                }
+            }
+        }
         overlay.uncover(keep)
     }
 
     override fun close() {
-        main.post {
-            val target = overlayTarget
-            if (target == null) {
-                overlay.hide("close")
-                return@post
-            }
+        // UsageStats and window IPC stay off the main thread; the decision runs on it.
+        g.scope.launch {
+            val fg = service.foreground.current()
             val lockTask = service.getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-            val inFront = service.foreground.current().any { it.packageName == target && !it.secondary }
-            if (overlayWeb && redirectWorked && !lockTask) {
-                overlay.hide("close")
-                overlayTarget = null
-                return@post
-            }
-            if ((inFront && g.engineHost.isBlocked(target)) || lockTask || continuousUntilGone == target) {
-                overlay.current?.let { overlay.update(it.copy(stuck = true, message = "Exit the app first")) }
-                goHome()
-                Brp.event("enforced", "how" to "HOME", "target" to target, "from" to "close")
-                return@post
-            }
+            main.post { closeWith(fg, lockTask) }
+        }
+    }
+
+    private fun closeWith(fg: List<ForegroundApp>, lockTask: Boolean) {
+        val target = overlayTarget
+        if (target == null) {
+            overlay.hide("close")
+            return
+        }
+        // Settings/installer guard: Close does nothing until the RECENTS → HOME sequence and the guard's debounce
+        // are over, so Settings can't be reopened from Recents in between.
+        if (overlayGuard && SystemTimeAndroid.elapsedRealtime() - guardShownRt < DEBOUNCE_MS) return
+        val inFront = fg.any { it.packageName == target && !it.secondary }
+        if (overlayWeb && redirectWorked && !lockTask) {
             overlay.hide("close")
             overlayTarget = null
-            if (overlayWeb) goHome()
+            return
         }
+        if ((inFront && g.engineHost.isBlocked(target)) || lockTask || continuousUntilGone == target) {
+            overlay.current?.let { overlay.update(it.copy(stuck = true, message = "Exit the app first")) }
+            goHome()
+            Brp.event("enforced", "how" to "HOME", "target" to target, "from" to "close")
+            return
+        }
+        overlay.hide("close")
+        overlayTarget = null
+        if (overlayWeb) goHome()
     }
 
     override fun pause15() {
@@ -318,6 +391,15 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
     fun hideAll(reason: String) = main.post {
         overlay.hideAll(reason)
         overlayTarget = null
+    }
+
+    /** Service stop: hide everything and drop every media callback (they must not outlive this service). */
+    fun release(reason: String) {
+        hideAll(reason)
+        main.post {
+            for ((c, cb) in mediaCallbacks) runCatching { c.unregisterCallback(cb) }
+            mediaCallbacks.clear()
+        }
     }
 
     // ---- model (§10.3) -----------------------------------------------------------------------
@@ -431,26 +513,35 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
                 c.transportControls.pause()
                 Brp.event("media", "pkg" to pkg, "action" to "pause")
             }
-            if (mediaCallbacks.keys.none { it.sessionToken == c.sessionToken }) {
-                val cb = object : MediaController.Callback() {
-                    override fun onPlaybackStateChanged(state: PlaybackState?) {
-                        if (state?.state == PlaybackState.STATE_PLAYING && g.engineHost.isBlocked(pkg)) {
-                            c.transportControls.pause()
-                            Brp.event("media", "pkg" to pkg, "action" to "re-pause")
-                        }
-                    }
-                }
-                c.registerCallback(cb, main)
-                mediaCallbacks[c] = cb
-            }
+            main.post { watchMedia(c, pkg) }
         }
     }
 
-    private fun pauseMediaCallbacksCleanup(blocked: Set<String>) {
+    /** Main thread: re-pause [c] whenever it starts playing while [pkg] stays blocked, in front or not (§10.2 step 1). */
+    private fun watchMedia(c: MediaController, pkg: String) {
+        if (mediaCallbacks.keys.any { it.sessionToken == c.sessionToken }) return
+        val cb = object : MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: PlaybackState?) {
+                if (state?.state == PlaybackState.STATE_PLAYING && g.engineHost.isBlockedInBackground(pkg)) {
+                    c.transportControls.pause()
+                    Brp.event("media", "pkg" to pkg, "action" to "re-pause")
+                }
+            }
+
+            override fun onSessionDestroyed() {
+                main.post { mediaCallbacks.remove(c)?.let { runCatching { c.unregisterCallback(it) } } }
+            }
+        }
+        c.registerCallback(cb, main)
+        mediaCallbacks[c] = cb
+    }
+
+    /** Drops the callbacks of packages that are no longer blocked anywhere (not only those in front). */
+    private fun pauseMediaCallbacksCleanup() = main.post {
         val it = mediaCallbacks.entries.iterator()
         while (it.hasNext()) {
             val (c, cb) = it.next()
-            if (c.packageName in blocked) continue
+            if (g.engineHost.isBlockedInBackground(c.packageName)) continue
             runCatching { c.unregisterCallback(cb) }
             it.remove()
         }
@@ -458,5 +549,8 @@ class Enforcer(private val service: BlockerAccessibilityService, private val g: 
 
     companion object {
         const val DEBOUNCE_MS = 1_500L
+
+        /** Re-enforcement interval of the Settings/installer guards: RECENTS → 400 ms → HOME, plus one 300 ms poll. */
+        const val GUARD_DEBOUNCE_MS = 700L
     }
 }

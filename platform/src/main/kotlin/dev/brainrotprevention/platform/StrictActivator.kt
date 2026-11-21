@@ -199,7 +199,7 @@ class StrictActivator internal constructor(private val app: Context, private val
     }
 
     suspend fun extendTimer(extraMs: Long): WriteResult<Unit> {
-        val r = g.data.strict.edit(StrictPolicy.extendTimer(g.data.strict.get(), extraMs))
+        val r = g.engineHost.confined { g.data.strict.extendTimer(extraMs) }
         g.engineHost.requestEvaluate("extend")
         return r
     }

@@ -1,6 +1,5 @@
 package dev.brainrotprevention.ui.editor
 
-import android.app.Activity
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +55,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import dev.brainrotprevention.engine.ScheduleValidator
 import dev.brainrotprevention.model.Combine
 import dev.brainrotprevention.model.LocationCondition
@@ -64,6 +65,7 @@ import dev.brainrotprevention.model.TimeWindow
 import dev.brainrotprevention.ui.LocalUiDeps
 import dev.brainrotprevention.ui.common.SwitchRow
 import dev.brainrotprevention.ui.common.debugRoot
+import dev.brainrotprevention.ui.common.findActivity
 import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.UiGrant
 import java.util.Locale
@@ -79,20 +81,29 @@ fun WhenEditor(s: Schedule, onChange: ((Schedule) -> Schedule) -> Unit) {
     val context = LocalContext.current
     var wifiOpen by rememberSaveable { mutableStateOf(false) }
     var locationOpen by rememberSaveable { mutableStateOf(false) }
-    var pendingAfterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Which dialog to open once location is granted ("wifi" / "location"); saveable across the permission prompt.
+    var pendingTrigger by rememberSaveable { mutableStateOf<String?>(null) }
+    var deniedFor by rememberSaveable { mutableStateOf<String?>(null) }
     val perm = deps.platform.health.runtimePermission(UiGrant.LOCATION_FINE)
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        pendingAfterPermission?.invoke()
-        pendingAfterPermission = null
+
+    fun open(kind: String) {
+        if (kind == "wifi") wifiOpen = true else locationOpen = true
+    }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val kind = pendingTrigger
+        pendingTrigger = null
+        if (kind == null) return@rememberLauncherForActivityResult
+        // Denied: the trigger could never match (no Wi-Fi name, no location), so say why instead of adding it.
+        if (granted) open(kind) else deniedFor = kind
     }
 
     /** §11.3: location is asked only when a Wi-Fi or location trigger is added. */
-    fun withLocation(then: () -> Unit) {
+    fun withLocation(kind: String) {
         if (perm != null && ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
-            pendingAfterPermission = then
+            pendingTrigger = kind
             permLauncher.launch(perm)
         } else {
-            then()
+            open(kind)
         }
     }
 
@@ -139,7 +150,7 @@ fun WhenEditor(s: Schedule, onChange: ((Schedule) -> Schedule) -> Unit) {
                 Text(" Time")
             }
             OutlinedButton(
-                onClick = { withLocation { wifiOpen = true } },
+                onClick = { withLocation("wifi") },
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .testTag("when_add_wifi")
@@ -148,7 +159,7 @@ fun WhenEditor(s: Schedule, onChange: ((Schedule) -> Schedule) -> Unit) {
                 Text(" Wi-Fi")
             }
             OutlinedButton(
-                onClick = { withLocation { locationOpen = true } },
+                onClick = { withLocation("location") },
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .testTag("when_add_location")
@@ -176,6 +187,30 @@ fun WhenEditor(s: Schedule, onChange: ((Schedule) -> Schedule) -> Unit) {
             }
         }
     }
+    deniedFor?.let { kind ->
+        AlertDialog(
+            onDismissRequest = { deniedFor = null },
+            modifier = Modifier
+                .debugRoot()
+                .testTag("location_denied"),
+            title = { Text("Location is needed") },
+            text = {
+                Text(
+                    if (kind == "wifi") {
+                        "Android only tells apps the Wi-Fi name when they may use location, so a Wi-Fi condition would never " +
+                            "match. Allow location for Brainrot Prevention (in App info → Permissions if the prompt doesn't " +
+                            "appear) and add it again."
+                    } else {
+                        "A place condition needs location to know where you are; without it, it would never match. Allow " +
+                            "location for Brainrot Prevention (in App info → Permissions if the prompt doesn't appear) and add it again."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { deniedFor = null }, modifier = Modifier.testTag("location_denied_ok")) { Text("OK") }
+            },
+        )
+    }
     if (wifiOpen) {
         WifiDialog(onDismiss = { wifiOpen = false }, onAdd = { ssid ->
             wifiOpen = false
@@ -194,8 +229,10 @@ fun WhenEditor(s: Schedule, onChange: ((Schedule) -> Schedule) -> Unit) {
 private fun BackgroundLocationHint() {
     val deps = LocalUiDeps.current
     val context = LocalContext.current
-    val health = remember { deps.platform.health.check() }
-    val bg = health[UiGrant.LOCATION_BACKGROUND]
+    var health by remember { mutableStateOf(runCatching { deps.platform.health.check() }.getOrNull()) }
+    // Re-checked on resume: the user comes back from the location settings with the grant changed.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { health = runCatching { deps.platform.health.check() }.getOrNull() }
+    val bg = health?.get(UiGrant.LOCATION_BACKGROUND)
     if (bg != null && !bg.granted) {
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
@@ -204,7 +241,7 @@ private fun BackgroundLocationHint() {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 TextButton(onClick = {
-                    (context as? Activity)?.let { deps.platform.health.open(it, UiGrant.LOCATION_BACKGROUND) }
+                    context.findActivity()?.let { deps.platform.health.open(it, UiGrant.LOCATION_BACKGROUND) }
                 }, modifier = Modifier.testTag("when_bg_location")) {
                     Text("Open location settings")
                 }
@@ -268,6 +305,7 @@ private fun WindowRow(i: Int, w: TimeWindow, onChange: (TimeWindow) -> Unit, onR
                     modifier = Modifier
                         .heightIn(min = 48.dp)
                         .testTag("window_${i}_start")
+                        .semantics { contentDescription = "Starts at ${Format.minuteOfDay(w.startMin)}" },
                 ) {
                     Text(Format.minuteOfDay(w.startMin), style = MaterialTheme.typography.titleLarge)
                 }
@@ -277,6 +315,10 @@ private fun WindowRow(i: Int, w: TimeWindow, onChange: (TimeWindow) -> Unit, onR
                     modifier = Modifier
                         .heightIn(min = 48.dp)
                         .testTag("window_${i}_end")
+                        .semantics {
+                            contentDescription =
+                                "Ends at ${Format.minuteOfDay(w.endMin)}" + if (w.overnight) " the next day" else ""
+                        },
                 ) {
                     Text(Format.minuteOfDay(w.endMin), style = MaterialTheme.typography.titleLarge)
                 }

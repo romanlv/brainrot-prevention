@@ -34,11 +34,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -137,7 +137,10 @@ fun AppsList(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppPickerDialog(all: List<UiApp>?, initial: List<String>, onDismiss: () -> Unit, onDone: (List<String>) -> Unit) {
-    val chosen = remember { mutableStateListOf<String>().apply { addAll(initial) } }
+    // Saveable, like `picking` and `query`: a rotation must not reset the picks made so far.
+    val chosen = rememberSaveable(saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
+        initial.toMutableStateList()
+    }
     var query by rememberSaveable { mutableStateOf("") }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(

@@ -269,8 +269,21 @@ class WeakenCheckerTest {
         assertEquals(LockScope.FOLLOWED, EditGuard.scope(on, StrictDisplayState.STANDBY))
         assertFalse(EditGuard.checkPause(on, StrictDisplayState.STANDBY, schedules, followed, now + MIN, now).allowed)
         assertTrue(EditGuard.checkPause(on, StrictDisplayState.STANDBY, schedules, other, now + MIN, now).allowed)
-        assertTrue(EditGuard.checkExcludedBrowsers(on, StrictDisplayState.STANDBY, emptySet(), setOf("a.b")).allowed)
-        assertTrue(EditGuard.checkPrefs(on, StrictDisplayState.STANDBY, Prefs(), Prefs(dayStartHour = 3)).allowed)
+        // Excluded browsers and dayStartHour are global, so they weaken the followed schedules too: locked in STANDBY.
+        assertEquals(
+            EditCheck.Refused(Refusal.EXCLUDED_BROWSER_ADDED),
+            EditGuard.checkExcludedBrowsers(on, StrictDisplayState.STANDBY, emptySet(), setOf("org.mozilla.focus"))
+        )
+        assertTrue(EditGuard.checkExcludedBrowsers(on, StrictDisplayState.STANDBY, setOf("a.b"), emptySet()).allowed)
+        assertEquals(
+            EditCheck.Refused(Refusal.SETTING_LOCKED),
+            EditGuard.checkPrefs(on, StrictDisplayState.STANDBY, Prefs(), Prefs(pendingDayStartHour = 12))
+        )
+        assertTrue(EditGuard.checkPrefs(on, StrictDisplayState.STANDBY, Prefs(), Prefs(limitWarningMin = 9)).allowed)
+        // No LOCK_EDITING: free.
+        assertTrue(
+            EditGuard.checkExcludedBrowsers(on.copy(options = 0), StrictDisplayState.STANDBY, emptySet(), setOf("a.b")).allowed
+        )
         assertTrue(
             EditGuard.checkQuickBlock(
                 on,

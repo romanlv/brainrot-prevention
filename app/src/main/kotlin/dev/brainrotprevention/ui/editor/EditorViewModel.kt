@@ -1,10 +1,10 @@
 package dev.brainrotprevention.ui.editor
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.brainrotprevention.data.WriteResult
 import dev.brainrotprevention.engine.StatusCalculator
-import dev.brainrotprevention.engine.ValidationError
+import dev.brainrotprevention.model.AllowlistWeb
 import dev.brainrotprevention.model.LimitKind
 import dev.brainrotprevention.model.Mode
 import dev.brainrotprevention.model.Schedule
@@ -30,24 +30,29 @@ class EditorViewModel(
     private val scheduleId: Long,
     template: Template?,
     startBlank: Boolean = false,
+    private val savedState: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     private val g = deps.graph
 
+    /** A draft restored after process death (or null). */
+    private val restored: Schedule? = savedState.getJson(KEY_DRAFT)
+
     /** Null while loading an existing schedule. */
     private val _draft = MutableStateFlow<Schedule?>(
-        if (scheduleId ==
-            0L
-        ) {
-            template?.schedule() ?: EditorOps.blank().takeIf { startBlank }
-        } else {
-            null
-        }
+        restored ?: if (scheduleId == 0L) template?.schedule() ?: EditorOps.blank().takeIf { startBlank } else null,
     )
     val draft: StateFlow<Schedule?> = _draft.asStateFlow()
 
+    /** The draft as it was when editing began; Back asks before discarding anything that differs from it. */
+    private var initial: Schedule? = savedState.getJson<Schedule>(KEY_INITIAL) ?: _draft.value
+
     /** New schedule without a template yet: show the template chooser. */
-    private val _choosingTemplate = MutableStateFlow(scheduleId == 0L && template == null && !startBlank)
+    private val _choosingTemplate = MutableStateFlow(restored == null && scheduleId == 0L && template == null && !startBlank)
     val choosingTemplate: StateFlow<Boolean> = _choosingTemplate.asStateFlow()
+
+    /** The website/keyword field (hoisted so Save can add what was typed, §12). */
+    private val _webInput = MutableStateFlow(savedState.getJson<WebInput>(KEY_WEB) ?: WebInput())
+    val webInput: StateFlow<WebInput> = _webInput.asStateFlow()
 
     var original: Schedule? = null
         private set
@@ -72,32 +77,65 @@ class EditorViewModel(
     private val _domainOffer = MutableStateFlow<DomainOffer?>(null)
     val domainOffer: StateFlow<DomainOffer?> = _domainOffer.asStateFlow()
 
+    /** True when the editor should close (saved, deleted, or the schedule no longer exists). */
     private val _saved = MutableStateFlow(false)
     val saved: StateFlow<Boolean> = _saved.asStateFlow()
 
+    /** A save or delete is in flight: both Save buttons are disabled, a second tap does nothing. */
+    private val _saving = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
+
+    private var notFound = false
+
     init {
+        initial?.let { if (!savedState.contains(KEY_INITIAL)) savedState.setJson(KEY_INITIAL, it) }
         viewModelScope.launch {
             if (scheduleId != 0L) {
                 val s = g.schedules.get(scheduleId)
                 original = s
-                if (s == null) _notice.value = Notice.Message("Not found", "This schedule was deleted.")
-                _draft.value = s
+                if (s == null) {
+                    notFound = true
+                    _notice.value = Notice.Message("Not found", "This schedule was deleted.")
+                } else if (restored == null) {
+                    initial = s
+                    _draft.value = s
+                }
+                savedState.setJson(KEY_INITIAL, initial)
             }
         }
+        viewModelScope.launch { _draft.collect { d -> if (d != null) savedState.setJson(KEY_DRAFT, d) } }
+        viewModelScope.launch { _webInput.collect { savedState.setJson(KEY_WEB, it) } }
         viewModelScope.launch { _apps.value = runCatching { deps.platform.apps.launchable() }.getOrDefault(emptyList()) }
         viewModelScope.launch { _essentials.value = runCatching { deps.platform.apps.allowlistEssentials() }.getOrDefault(emptyList()) }
     }
 
     fun chooseTemplate(t: Template?) {
-        _draft.value = t?.schedule() ?: EditorOps.blank()
+        val d = t?.schedule() ?: EditorOps.blank()
+        initial = d
+        savedState.setJson(KEY_INITIAL, d)
+        _draft.value = d
         _choosingTemplate.value = false
+    }
+
+    fun setWebInput(input: WebInput) {
+        _webInput.value = input
+    }
+
+    /** Whether the website field is shown for [s] (blocklist, or allowlist with "Only these sites"). */
+    private fun webFieldShown(s: Schedule) = s.mode == Mode.BLOCKLIST || s.allowlistWeb == AllowlistWeb.ONLY_LISTED
+
+    /** Unsaved edits that Back would discard: a changed draft, or text left in the website field. */
+    fun hasChanges(): Boolean {
+        if (_choosingTemplate.value || _saved.value) return false
+        val d = _draft.value ?: return false
+        return d != initial || (webFieldShown(d) && _webInput.value.text.isNotBlank())
     }
 
     fun update(f: (Schedule) -> Schedule) {
         _draft.update { it?.let(f) }
     }
 
-    fun label(pkg: String): String = _apps.value?.firstOrNull { it.packageName == pkg }?.label ?: deps.platform.apps.label(pkg)
+    fun label(pkg: String): String = _apps.value?.firstOrNull { it.packageName == pkg }?.label ?: deps.appLabel(pkg)
 
     /** Switching to ALLOWLIST with a budget asks first: allowlist schedules can't have budgets (§5.4). */
     fun requestMode(mode: Mode) {
@@ -159,6 +197,8 @@ class EditorViewModel(
 
     fun dismissNotice() {
         _notice.value = null
+        // "Not found": nothing to edit, so close instead of leaving an endless spinner.
+        if (notFound) _saved.value = true
     }
 
     fun dismissAlwaysPrompt() {
@@ -166,27 +206,48 @@ class EditorViewModel(
     }
 
     fun save(confirmedAlways: Boolean = false) {
-        val s = _draft.value ?: return
+        if (_saving.value) return
+        var s = _draft.value ?: return
         _alwaysPrompt.value = false
+        if (webFieldShown(s)) {
+            when (val p = EditorOps.commitPending(s.webRules, _webInput.value, if (s.mode == Mode.ALLOWLIST) "Allows" else "Blocks")) {
+                is PendingWeb.Unfinished -> {
+                    _notice.value = Notice.Message("Finish the website first", p.message)
+                    return
+                }
+                is PendingWeb.Ready -> if (p.consumedInput) {
+                    s = s.copy(webRules = p.rules)
+                    _draft.value = s
+                    _webInput.update { it.copy(text = "") }
+                }
+            }
+        }
         if (s.name.isBlank()) {
             _notice.value = Notice.Message("Add a name", "Give the schedule a short name first.")
+            return
+        }
+        // Before the "all the time?" prompt: there is no point confirming a schedule that can't be saved.
+        if (s.apps.isEmpty() && s.webRules.isEmpty() && s.mode == Mode.BLOCKLIST) {
+            _notice.value = Notice.Message("Can't save this", "Add at least one app or site to block.")
             return
         }
         if (!confirmedAlways && EditorOps.needsAlwaysPrompt(s)) {
             _alwaysPrompt.value = true
             return
         }
+        _saving.value = true
         viewModelScope.launch {
-            val toSave = if (s.id == 0L) s.copy(sortOrder = (g.schedules.getAll().maxOfOrNull { it.sortOrder } ?: -1) + 1) else s
-            val r = if (s.apps.isEmpty() && s.webRules.isEmpty() && s.mode == Mode.BLOCKLIST) {
-                WriteResult.Invalid(ValidationError("schedule.apps", "add at least one app or site to block"))
-            } else {
-                g.schedules.save(toSave)
-            }
-            _notice.value = r.notice()
-            if (r.isOk) {
-                deps.platform.engine.requestEvaluate()
-                _saved.value = true
+            try {
+                val toSave = if (s.id == 0L) s.copy(sortOrder = (g.schedules.getAll().maxOfOrNull { it.sortOrder } ?: -1) + 1) else s
+                val r = g.schedules.save(toSave)
+                _notice.value = r.notice()
+                if (r.isOk) {
+                    deps.platform.engine.requestEvaluate()
+                    _saved.value = true
+                }
+            } finally {
+                // Stays "saving" once saved, so nothing can be submitted again while the screen closes.
+                if (!_saved.value) _saving.value = false
             }
         }
     }
@@ -197,13 +258,25 @@ class EditorViewModel(
             _saved.value = true
             return
         }
+        if (_saving.value) return
+        _saving.value = true
         viewModelScope.launch {
-            val r = g.schedules.delete(id)
-            _notice.value = r.notice()
-            if (r.isOk) {
-                deps.platform.engine.requestEvaluate()
-                _saved.value = true
+            try {
+                val r = g.schedules.delete(id)
+                _notice.value = r.notice()
+                if (r.isOk) {
+                    deps.platform.engine.requestEvaluate()
+                    _saved.value = true
+                }
+            } finally {
+                if (!_saved.value) _saving.value = false
             }
         }
+    }
+
+    private companion object {
+        const val KEY_DRAFT = "editor_draft"
+        const val KEY_INITIAL = "editor_initial"
+        const val KEY_WEB = "editor_web_input"
     }
 }

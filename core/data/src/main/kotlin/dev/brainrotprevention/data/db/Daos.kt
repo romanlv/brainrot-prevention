@@ -117,6 +117,9 @@ interface QuickBlockDao {
 
     @Upsert suspend fun upsertRow(row: QuickBlockEntity)
 
+    @Query("UPDATE quick_block SET active = 0 WHERE id = 1 AND active = 1 AND `until` IS NOT NULL AND `until` <= :now")
+    suspend fun markExpired(now: Long): Int
+
     @Query("SELECT * FROM quick_block_app ORDER BY packageName")
     fun observeApps(): Flow<List<QuickBlockAppEntity>>
 

@@ -100,9 +100,14 @@ class EngineTest {
     @Test
     fun exemptComponentAndAdminFlow() {
         val snap = ConfigSnapshot(strict = strictTimer)
-        val comps = mapOf("com.android.settings" to "com.android.settings/com.android.settings.ConfirmDeviceCredentialActivity")
+        // The real class names (checked on the API 37 emulator): the credential prompt and DeviceAdminAdd.
+        val comps = mapOf("com.android.settings" to "com.android.settings/com.android.settings.password.ConfirmDeviceCredentialActivity")
         assertEquals(Decision.Allow, eval(snap, "com.android.settings", components = comps).apps["com.android.settings"])
-        val admin = mapOf("com.android.settings" to "com.android.settings/.DeviceAdminAdd")
+        val inner = mapOf("com.android.settings" to "com.android.settings/.password.ConfirmDeviceCredentialActivity\$InternalActivity")
+        assertEquals(Decision.Allow, eval(snap, "com.android.settings", components = inner).apps["com.android.settings"])
+        val old = mapOf("com.android.settings" to "com.android.settings/.ConfirmDeviceCredentialActivity") // not a real class
+        assertTrue(eval(snap, "com.android.settings", components = old).apps.getValue("com.android.settings").isBlock)
+        val admin = mapOf("com.android.settings" to "com.android.settings/.applications.specialaccess.deviceadmin.DeviceAdminAdd")
         assertTrue(eval(snap, "com.android.settings", components = admin).apps.getValue("com.android.settings").isBlock)
         assertEquals(
             Decision.Allow,

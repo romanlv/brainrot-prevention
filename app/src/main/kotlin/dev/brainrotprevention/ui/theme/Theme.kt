@@ -73,6 +73,10 @@ private val DarkScheme = darkColorScheme(
 
 val LocalBlockingColors = staticCompositionLocalOf { LightBlocking }
 
+/** "Granted" green for permission rows: dark green on light, a light green on dark (both ≥ 4.5:1 on surface). */
+val LocalGrantedColor = staticCompositionLocalOf { Color(0xFF2E7D32) }
+private val DarkGranted = Color(0xFF8FD694)
+
 /** Material 3 theme: light/dark, dynamic colour on API 31+, plus [LocalBlockingColors]. */
 @Composable
 fun BrpTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boolean = true, content: @Composable () -> Unit) {
@@ -83,7 +87,10 @@ fun BrpTheme(darkTheme: Boolean = isSystemInDarkTheme(), dynamicColor: Boolean =
         darkTheme -> DarkScheme
         else -> LightScheme
     }
-    CompositionLocalProvider(LocalBlockingColors provides if (darkTheme) DarkBlocking else LightBlocking) {
+    CompositionLocalProvider(
+        LocalBlockingColors provides if (darkTheme) DarkBlocking else LightBlocking,
+        LocalGrantedColor provides if (darkTheme) DarkGranted else Color(0xFF2E7D32),
+    ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }

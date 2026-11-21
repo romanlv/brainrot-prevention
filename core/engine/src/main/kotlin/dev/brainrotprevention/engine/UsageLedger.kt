@@ -25,6 +25,12 @@ data class LedgerState(
     val dirty: Boolean = false,
     val lastSaveElapsed: Long? = null,
     val lastTargetKeys: Set<String> = emptySet(),
+    /**
+     * False after a process or service restart (the platform seeds `LedgerState(counters, previousKeysKnown = false)`):
+     * the next tick takes the items in front as already running, so a restart never turns a running session
+     * into a new launch that the LAUNCHES limit could end (§5.4).
+     */
+    val previousKeysKnown: Boolean = true,
 ) {
     fun gated(scheduleId: Long, key: String): Boolean = gatedKeys[scheduleId]?.contains(key) == true
 }
@@ -82,21 +88,45 @@ object UsageLedger {
     const val SAVE_INTERVAL_MS = 10_000L
 
     /**
-     * Reset-on-read (§5.4). Returns the counter for the current period: reset when the period moved on,
-     * re-anchored (keeping `used`) when the clock went back.
+     * Reset-on-read (§5.4). Returns the counter for the current period: reset when the period moved on or the
+     * limit's period changed, re-anchored (keeping `used`) when the clock went back.
+     *
+     * A re-anchored counter remembers the end of the period its `used` belongs to (`holdUntil`): until policy
+     * time reaches that instant, a later period change (the clock going forward again) re-anchors instead of
+     * resetting, so moving the clock back and then forward never refills a budget [PL-M3].
      */
     fun read(counter: UsageCounter?, limit: UsageLimit, now: Long, zone: ZoneId, dayStartHour: Int): UsageCounter {
         val current = Periods.periodStart(limit.period, now, zone, dayStartHour)
+        fun fresh(lastLaunchAt: Long?) = UsageCounter(limit.id, current, 0, lastLaunchAt, null, limit.period, null)
+        fun reanchor(c: UsageCounter, hold: Long?) = c.copy(
+            periodStart = current,
+            warnedPeriodStart = if (c.warnedPeriodStart == c.periodStart) current else c.warnedPeriodStart,
+            period = limit.period,
+            holdUntil = hold,
+        )
         return when {
-            counter == null -> UsageCounter(limitId = limit.id, periodStart = current)
-            counter.periodStart < current -> UsageCounter(limit.id, current, 0, counter.lastLaunchAt, null)
-            counter.periodStart > current -> counter.copy(
-                periodStart = current,
-                warnedPeriodStart = if (counter.warnedPeriodStart == counter.periodStart) current else counter.warnedPeriodStart,
-            )
+            counter == null -> fresh(null)
+            counter.period != null && counter.period != limit.period -> fresh(counter.lastLaunchAt)
+            counter.periodStart > current -> {
+                val end = Periods.periodEnd(limit.period, counter.periodStart, zone, dayStartHour)
+                reanchor(counter, maxOf(end, counter.holdUntil ?: Long.MIN_VALUE))
+            }
+            counter.periodStart < current -> {
+                val hold = counter.holdUntil
+                if (hold != null && now < hold) reanchor(counter, hold) else fresh(counter.lastLaunchAt)
+            }
+            (counter.holdUntil ?: Long.MAX_VALUE) <= now -> counter.copy(period = limit.period, holdUntil = null)
+            counter.period == null -> counter.copy(period = limit.period)
             else -> counter
         }
     }
+
+    /** Whether [read] turned [before] into a fresh counter for a new period (not a re-anchor). */
+    private fun wasReset(before: UsageCounter, after: UsageCounter): Boolean =
+        after.holdUntil == null &&
+            after.used == 0L &&
+            after.warnedPeriodStart == null &&
+            (before.periodStart < after.periodStart || (before.period != null && before.period != after.period))
 
     fun exhausted(limit: UsageLimit, counter: UsageCounter): Boolean = counter.used >= limit.allowance
 
@@ -133,7 +163,7 @@ object UsageLedger {
                 if (limit.period == Period.DAILY) hasDaily = true
                 val before = state.counters[limit.id]
                 var c = read(before, limit, input.now, input.zone, input.dayStartHour)
-                if (before != null && before.periodStart < c.periodStart) {
+                if (before != null && wasReset(before, c)) {
                     events += LedgerEvent.PeriodReset(limit.id, c.periodStart)
                     if (limit.period == Period.DAILY) dailyReset = true
                 }
@@ -151,7 +181,7 @@ object UsageLedger {
                 counters[limit.id] = c
             }
 
-            val prev = state.previousKeys[s.scheduleId].orEmpty()
+            val prev = if (state.previousKeysKnown) state.previousKeys[s.scheduleId].orEmpty() else launchKeys
             val gated = state.gatedKeys[s.scheduleId].orEmpty().intersect(launchKeys).toMutableSet()
             val launchLimit = s.limits.firstOrNull { it.kind == LimitKind.LAUNCHES }
             if (launchLimit != null && s.armed) {
@@ -172,6 +202,11 @@ object UsageLedger {
             if (launchKeys.isNotEmpty()) newPrev[s.scheduleId] = launchKeys
             if (gated.isNotEmpty()) newGated[s.scheduleId] = gated
         }
+
+        // Counters of limits not processed this tick (a schedule whose evaluation threw, or a fallback snapshot
+        // without it) are carried over unchanged, so they are never rebuilt from zero later. Limit ids are
+        // AUTOINCREMENT (never reused), and saves drop rows of deleted limits.
+        for ((id, c) in state.counters) counters.putIfAbsent(id, c)
 
         if (input.pendingDayStartHour != null && (dailyReset || !hasDaily)) {
             events += LedgerEvent.DayStartHourApplied(input.pendingDayStartHour)

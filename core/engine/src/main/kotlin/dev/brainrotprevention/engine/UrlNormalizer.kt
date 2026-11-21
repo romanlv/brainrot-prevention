@@ -54,7 +54,7 @@ object UrlNormalizer {
         if (refer.startsWith(SAMSUNG_REFER)) {
             val q = refer.substringAfter('?', "")
             val param = q.split('&').firstOrNull { it.startsWith("url=") }
-            if (param != null) s = percentDecode(param.removePrefix("url=")).trim()
+            if (param != null) s = lowerNfc(percentDecode(param.removePrefix("url=")).trim()).removePrefix("view-source:")
         }
         return s
     }
@@ -77,8 +77,11 @@ object UrlNormalizer {
         val withScheme = if (schemeOf(text) == null) "https://$text" else text
         val host = if (scheme == "http" || scheme == "https") parseHost(withScheme.substringAfter(':')) else ""
         val ascii = toAscii(host)
-        return NormalizedUrl(text, scheme, ascii, toUnicode(ascii), percentDecode(text))
+        return NormalizedUrl(text, scheme, ascii, toUnicode(ascii), lowerNfc(percentDecode(text)))
     }
+
+    /** NFC then lower-case (also after percent-decoding, which can produce upper-case or decomposed text). */
+    private fun lowerNfc(s: String): String = Normalizer.normalize(s, Normalizer.Form.NFC).lowercase(Locale.ROOT)
 
     /** Parses an authority after `scheme:` (step 6): drops userinfo, handles `[ipv6]`, cuts the port, strips trailing dots. */
     internal fun parseHost(afterScheme: String): String {
@@ -97,7 +100,8 @@ object UrlNormalizer {
         host
     } else {
         try {
-            IDN.toASCII(host, IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT)
+            // IDN maps U+3002 and other full stops to '.', so a trailing one only shows up here.
+            IDN.toASCII(host, IDN.ALLOW_UNASSIGNED).lowercase(Locale.ROOT).trimEnd('.')
         } catch (_: IllegalArgumentException) {
             host
         }

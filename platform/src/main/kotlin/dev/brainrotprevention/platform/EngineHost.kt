@@ -72,10 +72,14 @@ class EngineHost internal constructor(private val app: Context, private val g: P
     private var timerTarget: Long? = null
     private var lastTamperCheckRt = 0L
     private var errorsPosted = emptyList<Long>()
+    private var lastService: BlockerAccessibilityService? = null
 
     /** Last evaluation result (read from any thread; may be slightly stale). */
     @Volatile var lastResult: EvaluationResult? = null
         private set
+
+    /** The snapshot [lastResult] was computed from. */
+    @Volatile private var lastResultSnapshot: ConfigSnapshot? = null
 
     fun now(): Long = g.clock.now()
 
@@ -98,6 +102,8 @@ class EngineHost internal constructor(private val app: Context, private val g: P
             while (true) {
                 delay(60_000)
                 runCatching { withContext(dispatcher) { tamperCheckLocked("minute") } }
+                // A crashed service stays enabled but unbound: notice it within a minute (§11.6).
+                if (g.service == null) runCatching { g.health.refresh() }
             }
         }
         requestEvaluate("start")
@@ -133,7 +139,7 @@ class EngineHost internal constructor(private val app: Context, private val g: P
     suspend fun onBoot() = withContext(dispatcher) {
         val row = g.data.strict.get()
         val clock = g.clock.read()
-        val t = StrictPolicy.check(row, g.data.strict.getEmergencyLog(), clock.now, clock.elapsed)
+        val t = StrictPolicy.check(row, g.data.strict.getEmergencyLog(), clock.now, clock.elapsed, bootCount())
         if (t.changed) g.data.strict.writeTamperCheck(t)
         val after = StrictPolicy.afterBoot(g.data.strict.get(), clock.now, clock.elapsed)
         if (after.isOn) g.data.strict.writePolicyResult(after)
@@ -143,7 +149,7 @@ class EngineHost internal constructor(private val app: Context, private val g: P
     internal suspend fun tamperCheckLocked(reason: String) {
         val clock = g.clock.read()
         val row = g.data.strict.get()
-        val t = StrictPolicy.check(row, g.data.strict.getEmergencyLog(), clock.now, clock.elapsed)
+        val t = StrictPolicy.check(row, g.data.strict.getEmergencyLog(), clock.now, clock.elapsed, bootCount())
         lastTamperCheckRt = SystemTimeAndroid.elapsedRealtime()
         if (t.changed) {
             g.data.strict.writeTamperCheck(t)
@@ -151,10 +157,21 @@ class EngineHost internal constructor(private val app: Context, private val g: P
         }
     }
 
+    /** `Settings.Global.BOOT_COUNT` (reboot detection for the tamper check, §9.6); null when unavailable. */
+    private fun bootCount(): Int? =
+        android.provider.Settings.Global.getInt(app.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 }
+
     private suspend fun evaluateLocked(reason: String) {
+        // The default launcher can change without a broadcast: re-resolve it (cached ~1 s) before reading the
+        // snapshot, so a new launcher is exempt before HOME lands on it.
+        if (g.packages.homeChanged()) g.packages.refresh("launcher")
         val snapshot = g.data.snapshots.current()
-        val st = state ?: EngineState(LedgerState(counters = g.data.counters.loadAll())).also { state = it }
         val svc = g.service
+        // Process start, or the accessibility service (re)connected: the foreground set we saw before is gone, so
+        // the items in front now are running sessions, not new launches (§5.4).
+        val seeded = state ?: EngineState(LedgerState(counters = g.data.counters.loadAll(), previousKeysKnown = false))
+        val st = if (svc != null && svc !== lastService) seeded.copy(ledger = seeded.ledger.copy(previousKeysKnown = false)) else seeded
+        lastService = svc
         val clock = g.clock.read()
 
         // Alarm catch-up: every instant passed since the last check fires in chronological order (§11.4, §14.3).
@@ -182,6 +199,7 @@ class EngineHost internal constructor(private val app: Context, private val g: P
         )
         state = result.state
         last = result
+        lastResultSnapshot = snapshot
         lastResult = result
         lastSnapshot = snapshot
 
@@ -213,6 +231,7 @@ class EngineHost internal constructor(private val app: Context, private val g: P
             evaluatedAt = clock.now,
         )
         svc?.onEvaluated(result, snapshot)
+        wakePolling()
     }
 
     private suspend fun fireDueAlarms(snapshot: ConfigSnapshot, now: Long) {
@@ -325,6 +344,18 @@ class EngineHost internal constructor(private val app: Context, private val g: P
         }
     }
 
+    private val pollWake = Channel<Unit>(Channel.CONFLATED)
+
+    /** Wakes [awaitPollingNeeded] (screen on, every evaluation). */
+    internal fun wakePolling() {
+        pollWake.trySend(Unit)
+    }
+
+    /** Suspends until [interactive] holds and [needsPolling] is true; re-checked after every wake. */
+    internal suspend fun awaitPollingNeeded(interactive: () -> Boolean) {
+        while (!(interactive() && needsPolling())) pollWake.receive()
+    }
+
     /** For `state`/debug: is anything armed or blocking, or Strict ACTIVE (the poll condition, §10.1)? */
     fun needsPolling(): Boolean {
         val r = lastResult ?: return true
@@ -340,11 +371,24 @@ class EngineHost internal constructor(private val app: Context, private val g: P
         lastAlarmCheck = null
         lastStrictDisplay = null
         errorsPosted = emptyList()
+        lastService = null
     }
 
     /** Notification-hiding until for [pkg] from [r] (§10.4); null = don't hide. */
     fun notificationBlock(snapshot: ConfigSnapshot, r: EvaluationResult, pkg: String): dev.brainrotprevention.engine.Until? =
         engine.notificationBlock(snapshot, r.statuses, pkg)
+
+    /** Whether [pkg] is blocked by the last evaluation even when it isn't in front (media re-pause, §10.2). */
+    internal fun isBlockedInBackground(pkg: String): Boolean {
+        val r = lastResult ?: return false
+        val s = lastResultSnapshot ?: return false
+        if (r.apps[pkg]?.isBlock == true) return true
+        return engine.backgroundBlock(s, r.statuses, r.summary.strict, pkg).isBlock
+    }
+
+    /** Ids of the schedules hiding notifications in [r] (§10.4). */
+    internal fun notificationHidingIds(snapshot: ConfigSnapshot, r: EvaluationResult): Set<Long> =
+        engine.notificationHidingIds(snapshot, r.statuses)
 
     /** True when the last decision for [pkg] was a block (used by the overlay to decide Close). */
     internal fun isBlocked(pkg: String): Boolean = lastResult?.apps?.get(pkg)?.isBlock == true

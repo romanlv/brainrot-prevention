@@ -2,7 +2,9 @@ package dev.brainrotprevention.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -23,13 +25,23 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.launch
 
 /** Manual DI for the UI: the data graph plus the platform ports. */
 class UiDeps(val graph: DataGraph, val platform: UiPlatform, val tickMs: Long = 1_000) {
     val clock: PolicyClock get() = graph.clock
 
     private val engine = Engine()
+    private val labels = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** An app's label, cached so PackageManager is asked at most once per package (callers are on the main thread). */
+    fun appLabel(pkg: String): String = labels.getOrPut(pkg) { runCatching { platform.apps.label(pkg) }.getOrDefault(pkg) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Runs [block] outside any screen's lifetime (a write that must finish after its ViewModel is cleared). */
+    fun launchDetached(block: suspend () -> Unit) {
+        scope.launch { block() }
+    }
 
     /** Ticks immediately, then every [periodMs]. */
     fun ticker(periodMs: Long = tickMs): Flow<Unit> = flow {
@@ -63,3 +75,11 @@ val LocalUiDeps = staticCompositionLocalOf<UiDeps> { error("UiDeps not provided"
 @Composable
 inline fun <reified VM : ViewModel> depsViewModel(deps: UiDeps, key: String? = null, crossinline create: (UiDeps) -> VM): VM =
     viewModel(key = key, factory = viewModelFactory { initializer { create(deps) } })
+
+/** Like [depsViewModel], with the ViewModel's [SavedStateHandle] (drafts that must survive process death). */
+@Composable
+inline fun <reified VM : ViewModel> depsViewModelWithState(
+    deps: UiDeps,
+    key: String? = null,
+    crossinline create: (UiDeps, SavedStateHandle) -> VM,
+): VM = viewModel(key = key, factory = viewModelFactory { initializer { create(deps, createSavedStateHandle()) } })

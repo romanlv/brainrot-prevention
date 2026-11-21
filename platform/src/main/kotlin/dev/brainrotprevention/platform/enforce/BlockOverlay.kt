@@ -123,15 +123,21 @@ class BlockOverlay(
         Brp.event("overlay", "state" to "hidden", "reason" to reason)
     }
 
-    /** A non-focusable, non-touchable cover over a PiP window that can't be dismissed. */
+    fun hasCover(key: String): Boolean = key in covers
+
+    /**
+     * A non-focusable, non-touchable cover over a PiP window that can't be dismissed: it hides the content, and
+     * touches pass through to the PiP window, so its close button still works (a touchable cover would trap a
+     * PiP that HOME can't remove).
+     */
     fun cover(key: String, bounds: Rect) {
         val existing = covers[key]
         val lp = WindowManager.LayoutParams(
             bounds.width(),
             bounds.height(),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.OPAQUE,
         ).apply {
             gravity = Gravity.TOP or Gravity.START

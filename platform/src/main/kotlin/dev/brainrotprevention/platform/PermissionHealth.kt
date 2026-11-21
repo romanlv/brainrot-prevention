@@ -19,9 +19,12 @@ import android.os.Process
 import android.provider.Settings
 import dev.brainrotprevention.model.StrictDisplayState
 import dev.brainrotprevention.model.StrictOptions
+import dev.brainrotprevention.platform.time.SystemTimeAndroid
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /** The grants of §11.3. */
 enum class Grant {
@@ -71,12 +74,40 @@ class PermissionHealth internal constructor(private val app: Context, private va
 
     @Volatile private var offPosted = false
 
+    /** When the service was last seen unbound (process start counts): enabled-but-unbound longer than this is off. */
+    @Volatile private var unboundSinceRt = SystemTimeAndroid.elapsedRealtime()
+
+    @Volatile private var recheckPending = false
+
+    internal fun onServiceConnected(connected: Boolean) {
+        if (!connected) unboundSinceRt = SystemTimeAndroid.elapsedRealtime()
+    }
+
+    /**
+     * Enabled in Settings but not bound for more than [UNBOUND_GRACE_MS]: a crashed service is listed under
+     * "Crashed services" and not rebound, so it is as off as a disabled one.
+     */
+    private fun enabledButDead(enabled: Boolean): Boolean {
+        if (!enabled || g.service != null) return false
+        val dead = SystemTimeAndroid.elapsedRealtime() - unboundSinceRt >= UNBOUND_GRACE_MS
+        if (!dead && !recheckPending) {
+            recheckPending = true
+            g.scope.launch {
+                delay(UNBOUND_GRACE_MS)
+                recheckPending = false
+                refresh()
+            }
+        }
+        return dead
+    }
+
     /** Health check (§11.6: app open, service connect, every 6 h). Posts "Blocking is off" once per outage. */
     fun refresh(): HealthReport {
         val r = check()
         _report.value = r
         val anyEnabled = g.data.snapshots.snapshot.value?.schedules?.any { it.enabled } == true
-        val off = !accessibilityEnabled()
+        val enabled = accessibilityEnabled()
+        val off = !enabled || enabledButDead(enabled)
         if (off && anyEnabled) {
             if (!offPosted) {
                 offPosted = true
@@ -85,7 +116,11 @@ class PermissionHealth internal constructor(private val app: Context, private va
                     if (settingsLockedByStrict()) {
                         "Turn the accessibility service back on when Strict Mode ends."
                     } else {
-                        "Turn the Brainrot Prevention accessibility service back on."
+                        if (enabled) {
+                            "The accessibility service stopped. Turn it off and on again in Accessibility settings."
+                        } else {
+                            "Turn the Brainrot Prevention accessibility service back on."
+                        }
                     },
                 )
             }
@@ -98,6 +133,8 @@ class PermissionHealth internal constructor(private val app: Context, private va
     fun check(): HealthReport {
         val snapshot = g.data.snapshots.snapshot.value
         val needsLocation = snapshot?.schedules?.any { it.enabled && (it.wifi.isNotEmpty() || it.locations.isNotEmpty()) } == true
+        // Geofencing needs background location on API 29+ (§11.5); without it a location trigger never changes.
+        val needsBackgroundLocation = snapshot?.schedules?.any { it.enabled && it.locations.isNotEmpty() } == true
         val a11yOn = accessibilityEnabled()
         val connected = accessibilityConnected()
         val items = listOf(
@@ -119,7 +156,8 @@ class PermissionHealth internal constructor(private val app: Context, private va
             GrantStatus(
                 Grant.LOCATION_BACKGROUND,
                 Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-                false
+                needsBackgroundLocation,
+                g.sensors.geofences.problem.takeIf { needsBackgroundLocation },
             ),
             GrantStatus(Grant.BATTERY_OPTIMIZATION, ignoringBatteryOptimizations(), false),
             GrantStatus(Grant.DEVICE_ADMIN, g.strict.isAdminActive(), false),
@@ -241,5 +279,9 @@ class PermissionHealth internal constructor(private val app: Context, private va
                 FixOutcome.Unavailable
             }
         }
+    }
+
+    private companion object {
+        const val UNBOUND_GRACE_MS = 30_000L
     }
 }

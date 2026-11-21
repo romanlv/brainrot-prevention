@@ -73,7 +73,36 @@
   repeats (that unbinds the accessibility service), so a plain `am start` resumed the previous repeat's activity
   with the "Locked by Strict Mode" dialog still open over the card menu.
 
+- **Settings guard list (§9.3)** also has `com.samsung.accessibility` (One UI accessibility settings, where installed
+  services are turned off) and `com.huawei.systemmanager`. Not verified on those devices (emulator only).
+- **Settings/installer guard:** re-enforces after 700 ms (RECENTS, 400 ms, HOME, one poll) instead of the 1.5 s debounce,
+  and the block screen's Close does nothing for the first 1.5 s of a guard block, so Settings can't be reopened from
+  Recents inside the debounce window.
+- **Picture-in-picture (§10.2 step 3):** a blocked package whose only window is PiP is paused and covered, but gets no HOME,
+  no full-screen block and doesn't count toward the loop rule (HOME can't remove a PiP window, so the old path re-showed
+  the block every 1.5 s and never let go). The cover is `FLAG_NOT_TOUCHABLE`: touches reach the PiP window, so its close
+  button works; expanding it makes it a full window, which is enforced normally. The 10 s Pause timer is keyed on the
+  blocked package, not on every re-show.
+- **Media re-pause** follows "the package stays blocked" (`EngineHost.isBlockedInBackground`: the decision the package would
+  get in front, without LAUNCHES gates and guards), not "the package is in front"; callbacks are dropped on service stop.
+- **URL-bar rewrite** is reported as `URL_REWRITE` only when the bar shows the blank page within 1 s; otherwise the intent
+  redirect runs. The SET_TEXT content stays the redirect URI (§7.6 step 1.3 and S8 require the `content://` page; the
+  sentence "about:blank is used only as SET_TEXT content" contradicts them).
+- **Health (§11.6):** "Blocking is off" is also posted when the service is enabled but has not been bound for 30 s (a
+  crashed service is not rebound), and the check also runs every minute while the service is unbound and on every
+  alarm. Background location is required (and the geofence registration problem shown) when a location trigger exists.
+- **Default launcher** is re-resolved at most once a second during evaluations (a change sends no broadcast).
+- **Notification sweep** (§10.4) runs only when the set of schedules hiding notifications changes; "N held today" counts
+  each notification key once per day.
+- **Poll loop** sleeps (no 300 ms wakeups) while the screen is off or nothing is armed, until SCREEN_ON or an evaluation.
+
 ## Open
+- **External displays / desktop windows** (review round 1, platform minor 1): the foreground set uses `getWindows()` (default
+  display) and HOME/overlay act on the default display only. Supporting other displays needs `getWindowsOnAllDisplays()`
+  plus a per-display overlay window and a way to close an app window on another display (there is no per-display HOME);
+  not done in v1.
+- **Location fallback without Play Services (§11.5)** is not implemented: location triggers need the Play Services
+  geofencing API.
 
 - **`pm archive` under an active device admin (§9.3) is not settled:** on the emulator `pm archive
   dev.brainrotprevention.debug` fails with `NameNotFoundException: No installer found` (the app was installed with
@@ -97,9 +126,43 @@
 - **Strict row edits** (method, options, PIN, cooldown, shortening TIMER) are refused whenever Strict Mode is ON, even without LOCK_EDITING; only TIMER extension and followAll false→true are allowed.
 - **Tamper bookkeeping** (`lastCheck*`) is kept and skew-adjusted also while Strict Mode is INACTIVE, so the emergency 30-day window resists clock jumps between activations. `Engine.evaluate` never mutates the strict row; the platform calls `StrictPolicy.check` (every minute, TIME_SET, TIMEZONE_CHANGED, shutdown, boot).
 - **Backup import:** web-rule values are normalised on import (a DOMAIN with a path keeps only the domain); duplicates after normalisation, duplicate SSIDs/packages, and more than 100 locations in total are rejected. Missing optional JSON fields take the editor defaults. Pref ranges (unspecified in §4): limitWarningMin 0–120, notifyBeforeStartMin 0–120, notifyBeforePauseEndMin 0–60. The export writes `pendingDayStartHour` (if set) as `dayStartHour`.
+- **Clock back then forward (§5.4 [PL-M3]):** the re-anchor keeps `used` *and* stores `holdUntil` (the end of the period
+  that `used` belongs to). Until policy time reaches it, a later period change re-anchors again instead of resetting, so
+  moving the clock back and then forward never refills a budget. Cost: a clock that stays wrong delays the next real
+  reset by up to the size of the jump. `usage_counter` also stores `period`; a different period resets the counter (the
+  spec's "changing `period` resets the counter", which the re-anchor rule used to swallow for HOURLY→DAILY).
+- **Restart and LAUNCHES (§5.4):** after a process start or an accessibility-service (re)connect the platform seeds
+  `LedgerState(previousKeysKnown = false)`, and the first tick takes the items in front as running sessions (not counted,
+  not gated). An app launched in the same instant as the restart is therefore not counted.
+- **Ledger carry-over:** counters of limits not processed in a tick (a schedule whose evaluation threw, an empty fallback
+  snapshot) are kept unchanged instead of being dropped and later rebuilt at 0.
+- **Tamper check (§9.6):** a reboot is also detected from `Settings.Global.BOOT_COUNT` (stored as `strict_mode.bootCount`),
+  not only from elapsed time going back, so a short previous uptime can't make the time the device was off look like a
+  forward jump. A skew of 60 s or less is not applied but carried in `lastCheckWall` (it moves by the elapsed time only),
+  so repeated small jumps add up and are applied once they pass 60 s.
+- **Strict row edits** are compared column by column: only `endsAt`/`endsAtElapsed` (TIMER, extend only) and
+  `followAllSchedules` (false→true) may differ; PIN lockout, tamper bookkeeping, `activatedAt` and `bootCount` can't be
+  edited while ON. `StrictRepository.extendTimer` reads the row inside the write lock and returns `NotFound` when no TIMER
+  is running (it ended between the tap and the write).
+- **LOCK_EDITING in STANDBY:** "these rules apply to followed schedules only" is read as covering the global settings
+  that weaken followed schedules too: adding an excluded browser and changing `dayStartHour` are refused in STANDBY as
+  well as ACTIVE (the block-screen "Not a browser? Allow" is refused whenever ON anyway).
+- **Anywhere-in-URL keywords** also match the host (Unicode and ASCII), so widening a host keyword never unblocks a site
+  (an IDN host such as `xn--bcher-kva.de` matched `bücher` only through `hostUnicode`).
+- **Coverage bitmap with no windows on either side:** the [V2-N7] no-window rule is skipped when neither version has a
+  time window (the combine and trigger-row checks decide); ALL→ANY with only Wi-Fi or only location rows is allowed.
+- **URL normalisation:** the percent-decoded text (and a decoded Samsung refer target) is NFC-normalised and lower-cased
+  again; trailing dots are stripped after IDN mapping too (`facebook.com。` → `facebook.com`).
+- **Exempt components:** the credential prompt is `com.android.settings/.password.ConfirmDeviceCredentialActivity`
+  (plus its `$InternalActivity`), and `ADD_DEVICE_ADMIN` resolves to
+  `.applications.specialaccess.deviceadmin.DeviceAdminAdd` (both checked with `cmd package query-activities` on the API 37
+  emulator); the names in §9.3 without the `.password.`/`.applications…` packages don't exist on API 28+.
 - **WeakenChecker:** adding another row of an existing trigger type (rows are OR'd) is allowed even under ALL; under ALLOWLIST+OPEN, web-rule edits are free (they have no effect until ONLY_LISTED, which is itself a strengthening).
 
 ## Data layer (core:data)
+- **Schema v2** (auto-migration from v1): `usage_counter.period`, `usage_counter.holdUntil`, `strict_mode.bootCount`, all
+  nullable. `QuickBlockRepository.markExpired(now)` is conditional (`until <= now`), and `save()` refuses an active Quick
+  Block without items, like `start()`.
 - **Import is two writes:** schedules, Quick Block items and excluded browsers are replaced in one Room transaction; the
   prefs (DataStore) are written right after the commit. The whole file is validated before either write, so only an
   I/O failure could split them.

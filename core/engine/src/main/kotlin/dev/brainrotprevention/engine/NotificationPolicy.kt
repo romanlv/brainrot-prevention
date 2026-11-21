@@ -49,6 +49,11 @@ object NotificationPolicy {
         return if (untils.isEmpty()) null else Until.combine(untils)
     }
 
+    /** Ids of the schedules (and Quick Block) hiding notifications right now; empty = nothing to sweep. */
+    fun hidingIds(prepared: PreparedSnapshot, statuses: Map<Long, ScheduleStatus>): Set<Long> =
+        prepared.effective.filter { s -> s.blockNotifications && statuses[s.id]?.blockingOrLaunchesExhausted == true }
+            .mapTo(LinkedHashSet()) { it.id }
+
     /**
      * Decision for one notification. [block] from [blockFor]; [toSystemMillis] is `PolicyClock.toSystemMillis`;
      * [systemNow] is `SystemTime.currentTimeMillis()`.

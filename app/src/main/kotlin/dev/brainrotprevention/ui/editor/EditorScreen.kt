@@ -1,5 +1,6 @@
 package dev.brainrotprevention.ui.editor
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,26 +67,39 @@ import dev.brainrotprevention.ui.common.NoticeHost
 import dev.brainrotprevention.ui.common.Section
 import dev.brainrotprevention.ui.common.Stepper
 import dev.brainrotprevention.ui.common.SwitchRow
-import dev.brainrotprevention.ui.depsViewModel
+import dev.brainrotprevention.ui.depsViewModelWithState
 import dev.brainrotprevention.ui.format.Format
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(deps: UiDeps, scheduleId: Long, template: Template?, onDone: () -> Unit, startBlank: Boolean = false) {
     val vm =
-        depsViewModel(deps, key = "editor_${scheduleId}_${template?.name}_$startBlank") {
-            EditorViewModel(it, scheduleId, template, startBlank)
+        depsViewModelWithState(deps, key = "editor_${scheduleId}_${template?.name}_$startBlank") { d, state ->
+            EditorViewModel(d, scheduleId, template, startBlank, state)
         }
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val s0 = draft
     val choosing by vm.choosingTemplate.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
     val always by vm.alwaysPrompt.collectAsStateWithLifecycle()
     val allowlistPrompt by vm.allowlistPrompt.collectAsStateWithLifecycle()
     val offer by vm.domainOffer.collectAsStateWithLifecycle()
+    val saving by vm.saving.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     LaunchedEffect(saved) { if (saved) onDone() }
+    val back: () -> Unit = {
+        focus.clearFocus()
+        if (vm.hasChanges()) {
+            confirmDiscard = true
+        } else {
+            onDone()
+        }
+    }
+    // The system back gesture asks too: one swipe must not throw away a long edit.
+    BackHandler(enabled = !saved, onBack = back)
 
     Scaffold(
         modifier = Modifier.imePadding(),
@@ -92,8 +107,8 @@ fun EditorScreen(deps: UiDeps, scheduleId: Long, template: Template?, onDone: ()
             TopAppBar(
                 title = { Text(if (scheduleId == 0L) "New schedule" else "Edit schedule") },
                 navigationIcon = {
-                    IconButton(onClick = onDone, modifier = Modifier.testTag("editor_back")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back without saving")
+                    IconButton(onClick = back, modifier = Modifier.testTag("editor_back")) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -106,7 +121,7 @@ fun EditorScreen(deps: UiDeps, scheduleId: Long, template: Template?, onDone: ()
                         TextButton(onClick = {
                             focus.clearFocus()
                             vm.save()
-                        }, modifier = Modifier.testTag("editor_save_top")) { Text("Save") }
+                        }, enabled = !saving && s0 != null, modifier = Modifier.testTag("editor_save_top")) { Text("Save") }
                     }
                 },
             )
@@ -121,7 +136,7 @@ fun EditorScreen(deps: UiDeps, scheduleId: Long, template: Template?, onDone: ()
                     .fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) { CircularProgressIndicator() }
-            else -> EditorBody(deps, vm, s, Modifier.padding(inner))
+            else -> EditorBody(deps, vm, s, saving, Modifier.padding(inner))
         }
     }
 
@@ -160,6 +175,20 @@ fun EditorScreen(deps: UiDeps, scheduleId: Long, template: Template?, onDone: ()
             onConfirm = { vm.answerDomainOffer(true) },
             onDismiss = { vm.answerDomainOffer(false) },
             tag = "domain_offer",
+        )
+    }
+    if (confirmDiscard) {
+        ConfirmDialog(
+            title = "Discard changes?",
+            text = "Your changes to this schedule haven't been saved.",
+            confirm = "Discard",
+            dismiss = "Keep editing",
+            onConfirm = {
+                confirmDiscard = false
+                onDone()
+            },
+            onDismiss = { confirmDiscard = false },
+            tag = "discard_changes",
         )
     }
     if (confirmDelete) {
@@ -227,7 +256,8 @@ fun TemplateList(onPick: (Template?) -> Unit) {
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun EditorBody(deps: UiDeps, vm: EditorViewModel, s: Schedule, modifier: Modifier) {
+private fun EditorBody(deps: UiDeps, vm: EditorViewModel, s: Schedule, saving: Boolean, modifier: Modifier) {
+    val webInput by vm.webInput.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
     val essentials by vm.essentials.collectAsStateWithLifecycle()
     val strictRow by deps.graph.strict.strict.collectAsStateWithLifecycle(StrictModeRow())
@@ -331,9 +361,13 @@ private fun EditorBody(deps: UiDeps, vm: EditorViewModel, s: Schedule, modifier:
                 AllowlistWebChoice(s.allowlistWeb) { v -> vm.update { it.copy(allowlistWeb = v) } }
             }
             if (!allow || s.allowlistWeb == AllowlistWeb.ONLY_LISTED) {
-                WebRulesEditor(s.webRules, onChange = { r ->
-                    vm.update { it.copy(webRules = r) }
-                }, verb = if (allow) "Allows" else "Blocks")
+                WebRulesEditor(
+                    s.webRules,
+                    onChange = { r -> vm.update { it.copy(webRules = r) } },
+                    input = webInput,
+                    onInput = vm::setWebInput,
+                    verb = if (allow) "Allows" else "Blocks",
+                )
             }
         }
         Section("When", subtitle = "Times and places when this schedule runs.") {
@@ -373,7 +407,7 @@ private fun EditorBody(deps: UiDeps, vm: EditorViewModel, s: Schedule, modifier:
         PrimaryWideButton("Save", onClick = {
             focus.clearFocus()
             vm.save()
-        }, tag = "editor_save")
+        }, tag = "editor_save", enabled = !saving)
         Spacer(Modifier.size(32.dp))
     }
 }

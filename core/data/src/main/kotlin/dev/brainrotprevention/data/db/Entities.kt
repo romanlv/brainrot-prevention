@@ -75,6 +75,10 @@ data class UsageCounterEntity(
     val used: Long,
     val lastLaunchAt: Long?,
     val warnedPeriodStart: Long?,
+    /** v2. */
+    val period: Period? = null,
+    /** v2. */
+    val holdUntil: Long? = null,
 )
 
 @Entity(
@@ -173,6 +177,8 @@ data class StrictModeEntity(
     val pinLockedUntilElapsed: Long?,
     val cooldownMin: Int,
     val activatedAt: Long?,
+    /** v2. */
+    val bootCount: Int? = null,
 )
 
 @Entity(tableName = "emergency_unblock")

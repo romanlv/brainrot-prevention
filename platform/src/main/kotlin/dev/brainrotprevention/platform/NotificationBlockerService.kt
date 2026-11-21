@@ -21,12 +21,18 @@ import kotlinx.coroutines.launch
  */
 class NotificationBlockerService : NotificationListenerService() {
     private val g: PlatformGraph get() = platform
-    private var lastBlockedPkgs: Set<String> = emptySet()
+
+    /** Schedules hiding notifications at the last sweep; the active list is only fetched when this changes. */
+    @Volatile private var lastHiding: Set<Long>? = null
+
+    /** "N held today" counts each notification key once per day (updates of one notification are re-snoozed). */
+    private val counted = java.util.concurrent.ConcurrentHashMap<String, String>() // key → day
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         g.listener = this
         Brp.event("service", "name" to "listener", "state" to "connected")
+        lastHiding = null
         g.scope.launch { g.engineHost.evaluateNow("listener-connected").let { sweep(null) } }
     }
 
@@ -77,23 +83,27 @@ class NotificationBlockerService : NotificationListenerService() {
         }
         Brp.event("notif_hidden", "pkg" to sbn.packageName, "ms" to action.durationMs)
         val day = Instant.ofEpochMilli(g.clock.now()).atZone(g.clock.zone()).toLocalDate().toString()
-        g.scope.launch { g.data.notificationCounts.increment(sbn.packageName, day) }
+        if (counted.put(sbn.key, day) != day) {
+            if (counted.size > MAX_COUNTED_KEYS) counted.entries.removeIf { it.value != day }
+            g.scope.launch { g.data.notificationCounts.increment(sbn.packageName, day) }
+        }
         return true
     }
 
-    /** After every evaluation: when packages start being blocked, apply the rules to the active notifications. */
+    /**
+     * After every evaluation: when the set of schedules hiding notifications changes, apply the rules to the
+     * active notifications. Nothing is fetched over binder while that set stays the same (new posts go through
+     * [onNotificationPosted]).
+     */
     internal fun onEvaluated(r: EvaluationResult, snapshot: ConfigSnapshot) {
-        val active = try {
-            activeNotifications
-        } catch (_: RuntimeException) {
-            null
-        } ?: return
-        val pkgs = active.map { it.packageName }.toSet()
-        val blocked = pkgs.filter { g.engineHost.notificationBlock(snapshot, r, it) != null }.toSet()
-        if (blocked == lastBlockedPkgs) return
-        val newly = blocked - lastBlockedPkgs
-        lastBlockedPkgs = blocked
-        if (newly.isNotEmpty()) sweep(newly)
+        val hiding = g.engineHost.notificationHidingIds(snapshot, r)
+        if (hiding == lastHiding) return
+        lastHiding = hiding
+        if (hiding.isNotEmpty()) sweep(null)
+    }
+
+    private companion object {
+        const val MAX_COUNTED_KEYS = 2_000
     }
 
     private fun sweep(only: Set<String>?) {

@@ -32,6 +32,7 @@ class QuickBlockRepository internal constructor(private val c: DataCore) {
                 )
         }
         val n = new.copy(webRules = rules)
+        if (n.active && n.isEmpty) return@write WriteResult.Invalid(ValidationError("quickBlock", "add at least one app or website first"))
         ScheduleValidator.validateApps(n.apps, "quickBlock.apps")?.let { return@write WriteResult.Invalid(it) }
         ScheduleValidator.validateRules(n.webRules, "quickBlock.webRules")?.let { return@write WriteResult.Invalid(it) }
         WriteResult.locked(EditGuard.checkQuickBlock(g.strict, g.display, g.schedules, g.snapshot.quickBlock, n, g.now))
@@ -50,11 +51,11 @@ class QuickBlockRepository internal constructor(private val c: DataCore) {
     /** Stop; refused (QUICK_BLOCK_STOPPED) while locked. */
     suspend fun stop(): WriteResult<Unit> = save(get().copy(active = false, until = null))
 
-    /** Engine cleanup: the timer expired, so `active = false` (not a weakening). */
-    suspend fun markExpired() = c.plain {
-        val row = dao.getRow() ?: return@plain
-        dao.upsertRow(row.copy(active = false))
-    }
+    /**
+     * Engine cleanup: the timer expired, so `active = false` (not a weakening). Conditional on the stored row
+     * (`until <= now`), so a Quick Block restarted after the engine saw the old one expire is kept.
+     */
+    suspend fun markExpired(now: Long = c.clock.now()) = c.plain { dao.markExpired(now) }
 
     /** Replaces row + items in the caller's transaction (also used by import). */
     internal suspend fun write(q: QuickBlock) {

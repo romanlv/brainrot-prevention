@@ -14,7 +14,8 @@ import java.util.concurrent.ConcurrentHashMap
  * cold start), (b) the packages of every application window from `getWindows()`, plus window-state hints.
  */
 class ForegroundSource(private val service: AccessibilityService) {
-    private var coldStart = true
+    /** The first read looks back 6 h (cold start); [current] runs on several threads, so this flips exactly once. */
+    private val coldStart = java.util.concurrent.atomic.AtomicBoolean(true)
 
     /** pkg → (component class, SystemTime when seen) from TYPE_WINDOW_STATE_CHANGED events. */
     private val hints = ConcurrentHashMap<String, Pair<String, Long>>()
@@ -66,8 +67,7 @@ class ForegroundSource(private val service: AccessibilityService) {
     private fun resumedFromUsage(): Map<String, String> {
         val usm = service.getSystemService(UsageStatsManager::class.java) ?: return emptyMap()
         val now = SystemTimeAndroid.currentTimeMillis()
-        val span = if (coldStart) 6 * 3_600_000L else 60_000L
-        coldStart = false
+        val span = if (coldStart.getAndSet(false)) 6 * 3_600_000L else 60_000L
         val events = try {
             usm.queryEvents(now - span, now + 1_000)
         } catch (_: RuntimeException) {

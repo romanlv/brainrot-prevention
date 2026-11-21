@@ -188,32 +188,48 @@ object StrictPolicy {
                 pinSalt = pin?.let { Base64.getEncoder().encodeToString(salt) },
                 cooldownMin = req.cooldownMin ?: current.cooldownMin,
                 activatedAt = wallNow,
+                bootCount = current.bootCount,
             ),
         )
     }
 
     /** The INACTIVE row after any unlock; tamper bookkeeping is kept (it also guards the emergency window). */
     fun deactivated(row: StrictModeRow): StrictModeRow =
-        StrictModeRow(lastCheckWall = row.lastCheckWall, lastCheckElapsed = row.lastCheckElapsed, cooldownMin = row.cooldownMin)
+        StrictModeRow(
+            lastCheckWall = row.lastCheckWall,
+            lastCheckElapsed = row.lastCheckElapsed,
+            cooldownMin = row.cooldownMin,
+            bootCount = row.bootCount,
+        )
 
-    /** Extends a running TIMER by [extraMs] (allowed under LOCK_EDITING). */
+    /** Whether [extendTimer] applies: Strict Mode is ON with a TIMER, and [extraMs] > 0. */
+    fun canExtendTimer(row: StrictModeRow, extraMs: Long): Boolean = row.isOn && row.method == StrictMethod.TIMER && extraMs > 0
+
+    /** Extends a running TIMER by [extraMs] (allowed under LOCK_EDITING). Precondition: [canExtendTimer]. */
     fun extendTimer(row: StrictModeRow, extraMs: Long): StrictModeRow {
-        require(row.isOn && row.method == StrictMethod.TIMER && extraMs > 0)
+        require(canExtendTimer(row, extraMs))
         return row.copy(endsAt = row.endsAt?.plus(extraMs), endsAtElapsed = row.endsAtElapsed?.plus(extraMs))
     }
 
     /**
      * §9.6, on TIME_SET, TIMEZONE_CHANGED, every minute and on ACTION_SHUTDOWN. Applies the wall/elapsed
      * skew (> 60 s, both directions) to endsAt, pinLockedUntilWall and the emergency log, detects a
-     * reboot (elapsed went back) and stores lastCheck. Runs whether Strict Mode is on or not.
+     * reboot and stores lastCheck. Runs whether Strict Mode is on or not.
+     *
+     * A reboot is detected when [bootCount] (`Settings.Global.BOOT_COUNT`) differs from the stored one, or when
+     * elapsed went back; without the boot count a reboot after a short previous uptime would look like a
+     * forward jump. A skew of 60 s or less is not applied but carried: `lastCheckWall` moves by the elapsed
+     * time only, so small jumps add up until they pass the threshold.
      */
-    fun check(row: StrictModeRow, log: List<EmergencyUnblock>, wallNow: Long, elapsedNow: Long): TamperCheck {
+    fun check(row: StrictModeRow, log: List<EmergencyUnblock>, wallNow: Long, elapsedNow: Long, bootCount: Int? = null): TamperCheck {
         val lw = row.lastCheckWall
         val le = row.lastCheckElapsed
+        val boot = bootCount ?: row.bootCount
         if (lw == null || le == null) {
-            return TamperCheck(row.copy(lastCheckWall = wallNow, lastCheckElapsed = elapsedNow), log, true, 0, false)
+            return TamperCheck(row.copy(lastCheckWall = wallNow, lastCheckElapsed = elapsedNow, bootCount = boot), log, true, 0, false)
         }
-        if (elapsedNow < le) return TamperCheck(afterBoot(row, wallNow, elapsedNow), log, true, 0, true)
+        val rebooted = elapsedNow < le || (bootCount != null && row.bootCount != null && bootCount != row.bootCount)
+        if (rebooted) return TamperCheck(afterBoot(row, wallNow, elapsedNow).copy(bootCount = boot), log, true, 0, true)
         val skew = (wallNow - lw) - (elapsedNow - le)
         var r = row
         var newLog = log
@@ -222,7 +238,8 @@ object StrictPolicy {
             r = r.copy(endsAt = r.endsAt?.plus(applied), pinLockedUntilWall = r.pinLockedUntilWall?.plus(applied))
             newLog = log.map { it.copy(at = it.at + applied) }
         }
-        r = r.copy(lastCheckWall = wallNow, lastCheckElapsed = elapsedNow)
+        // Unapplied skew stays in lastCheckWall (wallNow - skew), so it accumulates.
+        r = r.copy(lastCheckWall = wallNow - (skew - applied), lastCheckElapsed = elapsedNow, bootCount = boot)
         return TamperCheck(r, newLog, true, applied, false)
     }
 

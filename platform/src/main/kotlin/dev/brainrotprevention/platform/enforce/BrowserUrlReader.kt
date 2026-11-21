@@ -41,11 +41,18 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         }
         val now = SystemTimeAndroid.elapsedRealtime()
         val wid = e.windowId
-        val textChange = type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
         val last = lastExtractRt[wid] ?: 0L
-        if (!textChange && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && now - last < 250) return false
+        // Only a text change of the URL bar itself skips the throttle; typing in a web form must not trigger a
+        // window walk per keystroke.
+        val urlBarText = type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && isUrlBar(e, entry)
+        if (!urlBarText && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && now - last < 250) return false
         lastExtractRt[wid] = now
         return extract(pkg, entry, wid)
+    }
+
+    private fun isUrlBar(e: AccessibilityEvent, entry: BrowserEntry): Boolean {
+        val id = runCatching { e.source?.viewIdResourceName }.getOrNull() ?: return false
+        return entry.urlBarIds.any { it.id == id || id.endsWith(":id/${it.id}") || id.endsWith("/${it.id}") }
     }
 
     /** Reads the URL bar of [pkg]'s window now (also used by the poll). */
@@ -75,6 +82,15 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         val now = SystemTimeAndroid.elapsedRealtime()
         val first = firstSeenWithoutBarRt.getOrPut(pkg) { now }
         if (now - first >= 10_000 && missing.add(pkg)) Brp.event("url_bar_missing", "pkg" to pkg)
+    }
+
+    /** The URL bar's current text, read now without touching the cache; null when not found or focused. */
+    fun peek(pkg: String, entry: BrowserEntry): String? {
+        val root = rootFor(pkg, -1) ?: return null
+        val (node, _, source) = find(root, pkg, entry) ?: return null
+        node.refresh()
+        if (node.isFocused) return null
+        return (if (source == UrlBarSource.TEXT) node.text else node.contentDescription)?.toString()?.trim()
     }
 
     private fun rootFor(pkg: String, windowId: Int): AccessibilityNodeInfo? {

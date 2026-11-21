@@ -1,4 +1,4 @@
 {
-  "settings": ["com.android.settings", "com.miui.securitycenter", "com.samsung.android.lool"],
+  "settings": ["com.android.settings", "com.miui.securitycenter", "com.samsung.android.lool", "com.samsung.accessibility", "com.huawei.systemmanager"],
   "installer": ["com.google.android.packageinstaller", "com.android.packageinstaller"]
 }

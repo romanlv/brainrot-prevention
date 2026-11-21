@@ -80,7 +80,19 @@ class BackupSafTest {
 
     @Test
     fun importIsRefusedWhileStrictModeIsOn() {
-        file.writeText(runBlocking { env.graph.backup.exportText() })
+        // The device has data, and the backup holds different data: a wrongly applied import would be visible.
+        env.seed(TestEnv.workday("Keep"))
+        val text = runBlocking {
+            val other = TestEnv()
+            try {
+                other.seed(TestEnv.workday("Imported", apps = listOf("com.example.b")))
+                other.graph.backup.exportText()
+            } finally {
+                other.close()
+            }
+        }
+        file.writeText(text)
+        val before = env.schedules()
         env.strictOn()
         intending(hasAction(Intent.ACTION_OPEN_DOCUMENT))
             .respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(file))))
@@ -88,5 +100,7 @@ class BackupSafTest {
         rule.scrollTap("backup_import")
         rule.tap("import_confirm_confirm")
         rule.waitForTag("locked_by_strict")
+        assertEquals(before, env.schedules())
+        assertEquals(listOf("Keep"), env.schedules().map { it.name })
     }
 }

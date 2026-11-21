@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dev.brainrotprevention.engine.ActivationRefusal
 import dev.brainrotprevention.engine.EmergencyResult
 import dev.brainrotprevention.engine.Periods
+import dev.brainrotprevention.engine.ScheduleStatus
 import dev.brainrotprevention.engine.StrictActivation
 import dev.brainrotprevention.engine.StrictPolicy
 import dev.brainrotprevention.model.EmergencyUnblock
@@ -21,6 +22,7 @@ import dev.brainrotprevention.ui.common.notice
 import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.platform.UiActivation
 import dev.brainrotprevention.ui.platform.UiApp
+import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiUnlock
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,6 +70,41 @@ data class StrictForm(
     )
 }
 
+/** What the activation confirmation shows (§9.2): the method and how it ends, what gets locked, what is followed. */
+data class StrictSummary(val method: String, val ends: String, val locks: List<String>, val applies: String) {
+    companion object {
+        fun of(f: StrictForm, schedules: List<Schedule>, now: Long, zone: ZoneId): StrictSummary {
+            val (method, ends) = when (f.method) {
+                StrictMethod.TIMER ->
+                    "Timer" to
+                        "Ends in ${Format.duration(f.timerMs)}, at ${Format.at(now + f.timerMs, now, zone)}."
+                StrictMethod.SCHEDULES ->
+                    "Schedules" to
+                        "Active while a followed schedule blocks. When none is blocking, it can be turned off after a 5-minute wait."
+                StrictMethod.CHARGER -> "Charger" to "Can only be unlocked while the phone is plugged in."
+                StrictMethod.PIN -> "PIN" to "Can only be unlocked with the PIN that was just set."
+                StrictMethod.COOLDOWN -> "Cooldown" to "Unlocks after you wait ${f.cooldownMin} minutes on the Strict screen."
+            }
+            val locks = listOfNotNull(
+                "Editing: no pausing, deleting or loosening schedules".takeIf { StrictOptions.has(f.options, StrictOptions.LOCK_EDITING) },
+                "The Settings app".takeIf { StrictOptions.has(f.options, StrictOptions.BLOCK_SETTINGS) },
+                "Uninstalling this app (device admin)".takeIf { StrictOptions.has(f.options, StrictOptions.BLOCK_UNINSTALL) },
+            )
+            val blocklist = schedules.filter { it.mode == Mode.BLOCKLIST }
+            val applies = when {
+                f.method != StrictMethod.SCHEDULES -> "Covers every schedule and Quick Block."
+                f.followAll ->
+                    "Follows all schedules and Quick Block, including ones you add later" +
+                        (blocklist.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = ": ") { it.name } ?: "") + "."
+                else -> blocklist.filter { it.strictFollowed }.map { it.name }.let { names ->
+                    if (names.isEmpty()) "Follows no schedules yet." else "Follows: ${names.joinToString(", ")}."
+                }
+            }
+            return StrictSummary(method, ends, locks, applies)
+        }
+    }
+}
+
 /** A wait timed on screen by policy elapsed time (cooldown, standby turn-off, emergency countdown). */
 enum class WaitKind { COOLDOWN, STANDBY_OFF, EMERGENCY }
 
@@ -85,7 +122,11 @@ data class StrictUi(
     val now: Long = 0,
     val elapsed: Long = 0,
     val zone: ZoneId = ZoneId.systemDefault(),
+    val statuses: Map<Long, ScheduleStatus> = emptyMap(),
 ) {
+    /** SCHEDULES: the followed schedules blocking now, with their until lines (for the unlock condition). */
+    val blockingNow: String get() = Format.followedBlocking(row, schedules, statuses, now, zone)
+
     val pausedOrOff: List<Schedule> get() = StrictPolicy.pausedOrOff(schedules, now).let { ids -> schedules.filter { it.id in ids } }
     val notCovered: List<Schedule> get() = schedules.filter { it.mode == Mode.ALLOWLIST }
     val followable: List<Schedule> get() = schedules.filter { it.mode == Mode.BLOCKLIST }
@@ -134,7 +175,12 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
         deps.status,
     ) { row, log, schedules, excluded, status ->
         val c = deps.clock.read()
-        StrictUi(true, row, status.strict, schedules, log, excluded, c.now, c.elapsed, c.zone)
+        StrictUi(
+            true, row, status.strict, schedules, log, excluded, c.now, c.elapsed, c.zone,
+            status.statuses.associateBy {
+                it.scheduleId
+            }
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StrictUi())
 
     init {
@@ -164,13 +210,38 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
         }
     }
 
-    fun activate() = launchBusy {
+    private val _confirm = MutableStateFlow<StrictSummary?>(null)
+
+    /** Non-null: the "Turn on Strict Mode?" confirmation is showing this summary. */
+    val confirm: StateFlow<StrictSummary?> = _confirm.asStateFlow()
+
+    /** "Turn on Strict Mode": checks the PIN, then asks for confirmation with a summary (it is hard to undo). */
+    fun requestActivate() {
+        if (_busy.value) return
         val f = _form.value
         f.pinProblem?.let {
             _notice.value = Notice.Message("Check the PIN", it)
-            return@launchBusy
+            return
         }
-        handle(port.activate(f.request()))
+        val c = deps.clock.read()
+        _confirm.value = StrictSummary.of(f, state.value.schedules, c.now, c.zone)
+    }
+
+    fun cancelActivate() {
+        _confirm.value = null
+    }
+
+    /** Confirmed in the summary dialog. */
+    fun activate() {
+        _confirm.value = null
+        launchBusy {
+            val f = _form.value
+            f.pinProblem?.let {
+                _notice.value = Notice.Message("Check the PIN", it)
+                return@launchBusy
+            }
+            handle(port.activate(f.request()))
+        }
     }
 
     private fun handle(o: UiActivation) {
@@ -182,6 +253,11 @@ class StrictViewModel(private val deps: UiDeps) : ViewModel() {
             is UiActivation.Refused -> _notice.value = Notice.Message(
                 "Can't turn on Strict Mode",
                 o.reason?.let(Format::activationRefusal) ?: o.message,
+                fix = when (o.reason) {
+                    ActivationRefusal.ACCESSIBILITY_NOT_CONNECTED, ActivationRefusal.IN_ACCESSIBILITY_SHORTCUT -> UiGrant.ACCESSIBILITY
+                    ActivationRefusal.NO_USAGE_ACCESS -> UiGrant.USAGE_ACCESS
+                    else -> null
+                },
             )
             is UiActivation.NeedsDeviceAdmin -> _adminIntent.value = o.intent
         }

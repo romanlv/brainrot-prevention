@@ -3,6 +3,7 @@ package dev.brainrotprevention.ui
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
@@ -207,5 +208,94 @@ class EditorTest {
             }.timeWindows.map { it.copy(id = 0) },
             copy.timeWindows.map { it.copy(id = 0) }
         )
+    }
+
+    @Test
+    fun websiteTypedButNotAddedIsSavedToo() {
+        rule.show(env)
+        rule.tap("fab_new_schedule")
+        rule.tap("template_workday")
+        type("web_input", "reddit.com")
+        rule.onNodeWithTag("web_preview").assertTextContains("reddit.com", substring = true)
+        // Save without tapping Add: the previewed rule must not be dropped.
+        rule.scrollTap("editor_save")
+        rule.waitUntil(10_000) { env.schedules().isNotEmpty() }
+        assertEquals(
+            listOf(WebRule(kind = WebRuleKind.DOMAIN, value = "reddit.com")),
+            env.schedules().single().webRules.map { it.copy(id = 0) },
+        )
+    }
+
+    @Test
+    fun websiteNeedingAChoiceStopsTheSave() {
+        rule.show(env)
+        rule.tap("fab_new_schedule")
+        rule.tap("template_workday")
+        type("web_input", "https://reddit.com/r/all")
+        rule.scrollTap("editor_save")
+        rule.waitForTag("notice_dialog")
+        rule.onNodeWithTag("notice_dialog", useUnmergedTree = true).assertTextContains("has a path", substring = true)
+        assertTrue(env.schedules().isEmpty())
+    }
+
+    @Test
+    fun emptyBlocklistIsReportedBeforeTheAlwaysPrompt() {
+        rule.show(env)
+        rule.tap("fab_new_schedule")
+        rule.tap("template_scratch")
+        type("editor_name", "Nothing")
+        rule.scrollTap("editor_save")
+        rule.waitForTag("notice_dialog")
+        rule.onNodeWithTag("notice_dialog", useUnmergedTree = true).assertTextContains("Add at least one app or site", substring = true)
+        assertTrue(rule.onAllNodesWithTag("always_prompt", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(env.schedules().isEmpty())
+    }
+
+    @Test
+    fun backAsksBeforeDiscardingEdits() {
+        env.seed(TestEnv.workday("Keep"))
+        rule.show(env)
+        // Unchanged: Back leaves straight away.
+        rule.tap("schedule_card_Keep")
+        rule.waitForTag("editor_name")
+        rule.tap("editor_back")
+        rule.waitForTag("home_list")
+        // Changed: Back asks; "Keep editing" stays, the system back gesture asks too, "Discard" leaves unsaved.
+        rule.tap("schedule_card_Keep")
+        type("editor_name", "Renamed")
+        rule.tap("editor_back")
+        rule.tap("discard_changes_dismiss")
+        rule.waitForTag("editor_name")
+        Espresso.pressBack()
+        rule.tap("discard_changes_confirm")
+        rule.waitForTag("home_list")
+        assertEquals(listOf("Keep"), env.schedules().map { it.name })
+    }
+
+    @Test
+    fun startNowOnAnOffScheduleTurnsItOn() {
+        env.seed(TestEnv.workday("Sleeping").copy(enabled = false))
+        rule.show(env)
+        rule.tap("schedule_menu_Sleeping")
+        rule.tap("menu_start_now")
+        rule.waitForTag("start_also_arms")
+        rule.tap("start_option_1h")
+        rule.waitUntil(10_000) { env.schedules().single().manualUntil != null }
+        val s = env.schedules().single()
+        assertTrue(s.enabled)
+        assertEquals(T0 + 3_600_000L, s.manualUntil)
+    }
+
+    @Test
+    fun startNowOnAPausedScheduleEndsThePause() {
+        val id = env.seed(TestEnv.workday("Resting"))
+        env.ok(kotlinx.coroutines.runBlocking { env.graph.schedules.pause(id, T0 + 3_600_000L) })
+        rule.show(env)
+        rule.tap("schedule_menu_Resting")
+        rule.tap("menu_start_now")
+        rule.tap("start_option_stop")
+        rule.waitUntil(10_000) { env.schedules().single().manualUntil != null }
+        assertNull(env.schedules().single().pausedUntil)
+        rule.waitForTag("schedule_stop_Resting")
     }
 }

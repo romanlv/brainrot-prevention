@@ -99,11 +99,21 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
         viewModelScope.launch { g.snapshots.current() }
     }
 
-    /** Whether Strict Mode locks weakening edits of [id] right now (§9.4): Delete/Pause are refused without a prompt. */
+    /** Whether Strict Mode locks weakening edits of [id] right now (§9.4), from the UI's displayed state. */
     fun isLocked(id: Long): Boolean {
         val row = g.snapshots.snapshot.value?.strict ?: return false
         val st = state.value
         return dev.brainrotprevention.engine.EditGuard.isLocked(row, st.strict, st.schedules, id)
+    }
+
+    /**
+     * Delete/Pause while the UI shows the schedule as locked: the refusal is shown straight away, and nothing is
+     * written. The displayed state can be up to a tick old; if it is stale the other way (locked in the data layer
+     * but not yet in the UI), the normal confirmation runs and the write itself is refused. So a write never happens
+     * without the user's confirmation.
+     */
+    fun showLocked(refusal: dev.brainrotprevention.engine.Refusal) {
+        _notice.value = Notice.Locked(refusal)
     }
 
     fun dismissNotice() {
@@ -148,8 +158,20 @@ class HomeViewModel(private val deps: UiDeps) : ViewModel() {
 
     fun resume(id: Long) = run { g.schedules.resume(id) }
 
+    /**
+     * Start now (§8). `manualUntil` has no effect on a schedule that is off or paused (`isArmed` needs enabled and
+     * not paused), so Start now also turns it on / ends the pause first; both only strengthen it, so they are
+     * allowed under Strict Mode.
+     */
     fun startNow(id: Long, minutes: Int?) = run {
-        g.schedules.startNow(id, if (minutes == null) Schedule.UNTIL_STOPPED else now() + minutes * Periods.MINUTE)
+        val s = g.schedules.get(id) ?: return@run WriteResult.NotFound("schedule $id")
+        val until = if (minutes == null) Schedule.UNTIL_STOPPED else now() + minutes * Periods.MINUTE
+        val armed = when {
+            !s.enabled -> g.schedules.setEnabled(id, true) // also clears the pause
+            ScheduleEvaluator.isPaused(s, now()) -> g.schedules.resume(id)
+            else -> WriteResult.Ok(Unit)
+        }
+        if (!armed.isOk) armed else g.schedules.startNow(id, until)
     }
 
     fun stopNow(id: Long) = run { g.schedules.stopNow(id) }

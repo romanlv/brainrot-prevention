@@ -82,6 +82,7 @@ internal fun StrictModeEntity?.toModel(): StrictModeRow = this?.let {
         pinLockedUntilElapsed = it.pinLockedUntilElapsed,
         cooldownMin = it.cooldownMin,
         activatedAt = it.activatedAt,
+        bootCount = it.bootCount,
     )
 } ?: StrictModeRow()
 
@@ -102,13 +103,14 @@ internal fun StrictModeRow.toEntity() = StrictModeEntity(
     pinLockedUntilElapsed = pinLockedUntilElapsed,
     cooldownMin = cooldownMin,
     activatedAt = activatedAt,
+    bootCount = bootCount,
 )
 
 internal fun EmergencyUnblockEntity.toModel() = EmergencyUnblock(id, at)
 
-internal fun UsageCounterEntity.toModel() = UsageCounter(limitId, periodStart, used, lastLaunchAt, warnedPeriodStart)
+internal fun UsageCounterEntity.toModel() = UsageCounter(limitId, periodStart, used, lastLaunchAt, warnedPeriodStart, period, holdUntil)
 
-internal fun UsageCounter.toEntity() = UsageCounterEntity(limitId, periodStart, used, lastLaunchAt, warnedPeriodStart)
+internal fun UsageCounter.toEntity() = UsageCounterEntity(limitId, periodStart, used, lastLaunchAt, warnedPeriodStart, period, holdUntil)
 
 /**
  * Upsert-in-place of child rows (SPEC §4 conventions, PL-M2): a desired row matches an existing one by id

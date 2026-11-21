@@ -42,6 +42,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.brainrotprevention.data.PausePreset
+import dev.brainrotprevention.engine.ScheduleEvaluator
+import dev.brainrotprevention.model.Schedule
 import dev.brainrotprevention.ui.common.Stepper
 import dev.brainrotprevention.ui.common.debugRoot
 import dev.brainrotprevention.ui.format.Format
@@ -152,7 +154,7 @@ fun PauseSheet(name: String, presets: List<PausePreset>, now: Long, zone: ZoneId
 /** Start now…: 30 min, 1 h, 2 h, until I stop it (§8). [onPick] gets minutes, null = until stopped. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StartNowSheet(name: String, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
+fun StartNowSheet(name: String, onPick: (Int?) -> Unit, onDismiss: () -> Unit, alsoArms: String? = null) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier
@@ -172,12 +174,28 @@ fun StartNowSheet(name: String, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
+            if (alsoArms != null) {
+                Text(
+                    alsoArms,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp, vertical = 4.dp)
+                        .testTag("start_also_arms"),
+                )
+            }
             OptionRow("30 minutes", Icons.Default.PlayArrow, "start_option_30m", { onPick(30) })
             OptionRow("1 hour", Icons.Default.PlayArrow, "start_option_1h", { onPick(60) })
             OptionRow("2 hours", Icons.Default.PlayArrow, "start_option_2h", { onPick(120) })
             OptionRow("Until I stop it", Icons.Default.PlayArrow, "start_option_stop", { onPick(null) })
         }
     }
+}
+
+/** The extra line on the Start now sheet when starting also turns the schedule on or ends its pause. */
+fun startNowAlsoArms(s: Schedule, now: Long): String? = when {
+    !s.enabled -> "${s.name} is off. Starting it also turns it on."
+    ScheduleEvaluator.isPaused(s, now) -> "${s.name} is paused. Starting it also ends the pause."
+    else -> null
 }
 
 /** Hours + minutes stepper dialog (1 min – 24 h). */
@@ -236,7 +254,8 @@ fun DateTimeDialog(now: Long, zone: ZoneId, onDismiss: () -> Unit, onPick: (Long
             title = {
                 Text("Until what time on ${date!!.dayOfMonth} ${date!!.month.name.lowercase().replaceFirstChar { it.uppercase() }}?")
             },
-            text = { TimePicker(state) },
+            // Scrollable so the clock dial isn't clipped at large font sizes (200 %).
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { TimePicker(state) } },
             confirmButton = {
                 TextButton(onClick = {
                     val local = LocalDateTime.of(date!!, LocalTime.of(state.hour, state.minute))

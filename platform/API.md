@@ -42,7 +42,9 @@ p.strict          // StrictActivator
   NOTIFICATION_LISTENER, POST_NOTIFICATIONS, EXACT_ALARMS, LOCATION_FINE, LOCATION_BACKGROUND,
   BATTERY_OPTIMIZATION, DEVICE_ADMIN }` (`required` = a11y + usage access; location only when a Wi-Fi/location
   trigger exists).
-- `fun accessibilityEnabled()`, `fun accessibilityConnected()` (the service is bound right now).
+- `fun accessibilityEnabled()`, `fun accessibilityConnected()` (the service is bound right now). `refresh()` treats "enabled
+  but unbound for 30 s" (a crashed service) as off. `LOCATION_BACKGROUND` is `required` when a location trigger exists;
+  its `detail` names the geofence registration problem.
 - `fun fixIntent(kind): Intent?` — the Settings screen for that grant (`ACTION_ACCESSIBILITY_SETTINGS`, …).
   POST_NOTIFICATIONS / LOCATION_FINE are runtime permissions: `runtimePermission(kind): String?` gives the
   permission string for `rememberLauncherForActivityResult(RequestPermission())`. Background location on API 30+
@@ -80,7 +82,7 @@ p.strict          // StrictActivator
   - COOLDOWN: `startCooldown(): Long /*startedElapsed*/`, `cooldownRemaining(started)`, `suspend fun
     finishCooldown(started)`; cancel = forget `started` (on `ON_STOP`). Keep the screen on while waiting.
   - SCHEDULES in STANDBY: `startStandbyTurnOff()`, `suspend fun finishStandbyTurnOff(started)` (fixed 5 min).
-  - `suspend fun extendTimer(extraMs): WriteResult<Unit>`.
+  - `suspend fun extendTimer(extraMs): WriteResult<Unit>` — `NotFound` (not an exception) when the timer already ended.
 - Emergency (§9.7): `suspend fun emergencyAvailableAt(): Long?` (null = available), `PLEDGE: String` (retype
   exactly), `startEmergencyCountdown(): Long`, `emergencyRemaining(started)`, `suspend fun
   finishEmergency(started): EmergencyResult`.
@@ -89,7 +91,8 @@ p.strict          // StrictActivator
 ## Block screen (platform-owned)
 `dev.brainrotprevention.platform.ui.BlockScreen(model: BlockModel, actions: BlockActions)` — the full-bleed
 Material 3 composable shown in the accessibility overlay. Tags: `block_close`, `block_pause`, `pause_15m`,
-`block_allow_browser`. The UI agent may reuse it for previews; it is not shown from `MainActivity`.
+`block_allow_browser`. The UI agent may reuse it for previews; it is not shown from `MainActivity`. `BlockModel.target`
+(the blocked package) keys the 10 s Pause timer.
 
 ## Debug-only
 `dev.brainrotprevention.platform.debug.DebugPlatform` (clock commands, sensor overrides, snooze chunk) is used

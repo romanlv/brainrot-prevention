@@ -67,8 +67,10 @@ data class BlockModel(
     val motivation: String? = null,
     /** "3 notifications held today". */
     val notificationsLine: String? = null,
-    /** Changes whenever a new block is shown (restarts the 10 s pause timer). */
+    /** Changes whenever the overlay content is re-shown. */
     val token: Long = 0,
+    /** The blocked package; the 10 s Pause timer restarts only when the target changes, not on every re-show. */
+    val target: String = "",
 )
 
 interface BlockActions {
@@ -97,9 +99,9 @@ fun BlockTheme(content: @Composable () -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BlockScreen(model: BlockModel, actions: BlockActions, modifier: Modifier = Modifier) {
-    var showPauseSheet by remember(model.token) { mutableStateOf(false) }
-    var progress by remember(model.token) { mutableFloatStateOf(0f) }
-    LaunchedEffect(model.token, model.showPause) {
+    var showPauseSheet by remember(model.target) { mutableStateOf(false) }
+    var progress by remember(model.target) { mutableFloatStateOf(0f) }
+    LaunchedEffect(model.target, model.showPause) {
         if (!model.showPause) return@LaunchedEffect
         val steps = 50
         for (i in 1..steps) {

@@ -21,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -33,6 +32,7 @@ import dev.brainrotprevention.ui.LocalUiDeps
 import dev.brainrotprevention.ui.platform.FixResult
 import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiGrantStatus
+import dev.brainrotprevention.ui.theme.LocalGrantedColor
 
 /** Plain-language title and reason for each grant (§11.3, §12 onboarding). */
 object GrantText {
@@ -59,6 +59,18 @@ object GrantText {
         UiGrant.BATTERY_OPTIMIZATION -> "Stops some phones from closing blocking in the background. Optional."
         UiGrant.DEVICE_ADMIN -> "Only used by Strict Mode to block uninstalling."
     }
+
+    /**
+     * What to do when the accessibility service is switched on but Android hasn't bound it (it crashed or was
+     * stopped): the platform reports this as "enabled, not connected" in [UiGrantStatus.detail].
+     */
+    fun fixHint(item: UiGrantStatus): String? =
+        if (item.grant == UiGrant.ACCESSIBILITY && !item.granted && item.detail?.contains("not connected") == true) {
+            "Android has it switched on but isn't running it. Open the accessibility settings, turn Brainrot Prevention " +
+                "off and on again, then come back."
+        } else {
+            null
+        }
 }
 
 /**
@@ -79,7 +91,7 @@ fun GrantRow(
     val perm = deps.platform.health.runtimePermission(item.grant)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onChanged() }
     val color = when {
-        item.granted -> Color(0xFF2E7D32)
+        item.granted -> LocalGrantedColor.current
         item.required -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -116,6 +128,13 @@ fun GrantRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             item.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = color) }
+            GrantText.fixHint(item)?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("${tagPrefix}_${item.grant.name.lowercase()}_hint"),
+                )
+            }
         }
         if (!item.granted) {
             Spacer(Modifier.size(8.dp))

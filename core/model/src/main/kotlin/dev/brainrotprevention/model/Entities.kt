@@ -102,6 +102,8 @@ data class StrictModeRow(
     val pinLockedUntilElapsed: Long? = null,
     val cooldownMin: Int = 5,
     val activatedAt: Long? = null,
+    /** `Settings.Global.BOOT_COUNT` at the last tamper check (reboot detection, §9.6); null = unknown. */
+    val bootCount: Int? = null,
 ) {
     val isOn: Boolean get() = state == StrictState.ON
 
@@ -120,6 +122,13 @@ data class UsageCounter(
     val used: Long = 0,
     val lastLaunchAt: Long? = null,
     val warnedPeriodStart: Long? = null,
+    /** The limit's period when this counter was last read; a different period resets it (§5.4). Null = unknown (v1 rows). */
+    val period: Period? = null,
+    /**
+     * Set when the clock went back: the end of the period `used` belongs to. Until policy time reaches it, a
+     * later period change re-anchors instead of resetting, so back-then-forward can't refill a budget [PL-M3].
+     */
+    val holdUntil: Long? = null,
 )
 
 /** DataStore preferences (§4.1). */

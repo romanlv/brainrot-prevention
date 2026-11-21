@@ -16,6 +16,7 @@ import dev.brainrotprevention.model.WebRuleKind
 import dev.brainrotprevention.model.Weekdays
 import dev.brainrotprevention.model.WifiCondition
 import dev.brainrotprevention.ui.format.Format
+import kotlinx.serialization.Serializable
 
 /** Templates offered when creating a schedule (§12, our own wording). */
 enum class Template(val title: String, val icon: String, val description: String) {
@@ -59,6 +60,19 @@ sealed interface RulePreview {
     data class Invalid(val reason: String) : RulePreview
 }
 
+/** The website/keyword field (kind, typed text, anywhere-in-URL). Hoisted into the editor ViewModels so Save sees it. */
+@Serializable
+data class WebInput(val kind: WebRuleKind = WebRuleKind.DOMAIN, val text: String = "", val anywhere: Boolean = false)
+
+/** What Save does with text still in the website field. */
+sealed interface PendingWeb {
+    /** Nothing typed, or the typed rule added to [rules] (unchanged when it was already there). */
+    data class Ready(val rules: List<WebRule>, val consumedInput: Boolean) : PendingWeb
+
+    /** The input needs the user first (a path to choose for, or invalid text): Save stops with [message]. */
+    data class Unfinished(val message: String) : PendingWeb
+}
+
 /** Pure edits of a draft schedule. Every function returns a new draft; nothing here reads a clock. */
 object EditorOps {
     const val MIN = 60_000L
@@ -76,6 +90,23 @@ object EditorOps {
             is RuleInput.Invalid -> RulePreview.Invalid(r.reason.replaceFirstChar { it.uppercase() })
         }
     }
+
+    /**
+     * Save with text still in the website field (§12): a valid entry is added as if Add had been tapped, so a typed
+     * "reddit.com" is never dropped silently; an entry that needs a choice or is invalid stops the save.
+     */
+    fun commitPending(rules: List<WebRule>, input: WebInput, verb: String = "Blocks"): PendingWeb =
+        when (val p = preview(input.kind, input.text, input.anywhere, verb)) {
+            RulePreview.Empty -> PendingWeb.Ready(rules, consumedInput = false)
+            is RulePreview.Adds -> PendingWeb.Ready(addRule(rules, p.rule) ?: rules, consumedInput = true)
+            is RulePreview.Choose -> PendingWeb.Unfinished(
+                "“${input.text.trim()}” has a path. Choose the whole site or only pages containing it, or clear the field, then save.",
+            )
+            is RulePreview.Invalid -> PendingWeb.Unfinished(
+                "The website field still has “${input.text.trim()}”, which can't be added (${p.reason.trimEnd('.')}). " +
+                    "Fix or clear it, then save.",
+            )
+        }
 
     /** Adds [rule] unless a rule with the same (kind, value) exists; returns null for a duplicate. */
     fun addRule(rules: List<WebRule>, rule: WebRule): List<WebRule>? =

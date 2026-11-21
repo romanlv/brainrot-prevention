@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.Context
 import dev.brainrotprevention.data.DataGraph
 import dev.brainrotprevention.model.PolicyClock
+import dev.brainrotprevention.platform.log.Brp
 import dev.brainrotprevention.platform.sensors.Sensors
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,8 +35,15 @@ class PlatformGraph private constructor(
     val clock: PolicyClock,
     val debug: Boolean,
 ) {
-    /** Long-lived background work (never the main thread). */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /**
+     * Long-lived background work (never the main thread). An uncaught exception in any child is logged and
+     * followed by a re-evaluation instead of reaching the thread's uncaught-exception handler: a crash would
+     * leave the accessibility service under "Crashed services", unbound, and blocking silently off.
+     */
+    val scope = newScope { t ->
+        Brp.event("error", "where" to "scope", "msg" to t.toString())
+        runCatching { engineHost.requestEvaluate("recover") }
+    }
 
     val knobs = DebugKnobs()
     val packages = PackageFacts(app, this)
@@ -82,6 +91,12 @@ class PlatformGraph private constructor(
     }
 
     companion object {
+        /** A supervisor scope on [Dispatchers.Default] whose uncaught exceptions go to [onError] (never rethrown). */
+        internal fun newScope(onError: (Throwable) -> Unit): CoroutineScope =
+            CoroutineScope(
+                SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, t -> runCatching { onError(t) } },
+            )
+
         fun create(app: Application, data: DataGraph, clock: PolicyClock, debug: Boolean): PlatformGraph =
             PlatformGraph(app, data, clock, debug).also { it.start() }
     }

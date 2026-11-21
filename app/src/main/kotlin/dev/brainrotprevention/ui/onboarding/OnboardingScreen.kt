@@ -54,6 +54,7 @@ import dev.brainrotprevention.ui.editor.Template
 import dev.brainrotprevention.ui.editor.TemplateList
 import dev.brainrotprevention.ui.platform.FixResult
 import dev.brainrotprevention.ui.platform.UiGrant
+import dev.brainrotprevention.ui.platform.UiGrantStatus
 import dev.brainrotprevention.ui.platform.UiHealth
 
 private data class Intro(val icon: ImageVector, val title: String, val text: String)
@@ -176,7 +177,7 @@ fun OnboardingScreen(deps: UiDeps, onFinish: (template: Template?, openEditor: B
                             modifier = Modifier.testTag("onboarding_advanced_protection"),
                         )
                     }
-                    health.items.filter { it.grant != UiGrant.DEVICE_ADMIN }.forEach { item ->
+                    health.items.filter(::shownInOnboarding).forEach { item ->
                         GrantRow(
                             item,
                             buttonLabel = "Grant",
@@ -244,6 +245,19 @@ fun OnboardingScreen(deps: UiDeps, onFinish: (template: Template?, openEditor: B
         }
     }
     NoticeHost(notice) { notice = null }
+}
+
+/**
+ * The onboarding checklist asks only for what blocking needs now (§11.3): accessibility, usage access, the
+ * notification listener and notifications, plus exact alarms if they're missing. Location is "asked only when such a
+ * trigger is added", so its rows appear only when a Wi-Fi/place trigger already makes them required; battery
+ * optimisation and device admin stay in Settings / Strict Mode.
+ */
+internal fun shownInOnboarding(item: UiGrantStatus): Boolean = when (item.grant) {
+    UiGrant.ACCESSIBILITY, UiGrant.USAGE_ACCESS, UiGrant.NOTIFICATION_LISTENER, UiGrant.POST_NOTIFICATIONS -> true
+    UiGrant.EXACT_ALARMS -> !item.granted
+    UiGrant.LOCATION_FINE, UiGrant.LOCATION_BACKGROUND -> item.required
+    UiGrant.BATTERY_OPTIMIZATION, UiGrant.DEVICE_ADMIN -> false
 }
 
 @Composable

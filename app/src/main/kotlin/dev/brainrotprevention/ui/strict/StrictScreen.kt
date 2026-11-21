@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,6 +68,7 @@ import dev.brainrotprevention.ui.common.Pill
 import dev.brainrotprevention.ui.common.Section
 import dev.brainrotprevention.ui.common.Stepper
 import dev.brainrotprevention.ui.common.SwitchRow
+import dev.brainrotprevention.ui.common.debugRoot
 import dev.brainrotprevention.ui.depsViewModel
 import dev.brainrotprevention.ui.format.Format
 import dev.brainrotprevention.ui.theme.LocalBlockingColors
@@ -95,6 +97,8 @@ fun StrictScreen(deps: UiDeps, contentPadding: PaddingValues) {
         if (st.row.isOn) StrictOn(vm, st) else StrictInactive(vm, st)
     }
     emergency?.let { EmergencyFlow(vm, it, st) }
+    val confirm by vm.confirm.collectAsStateWithLifecycle()
+    confirm?.let { ActivationConfirm(it, onConfirm = vm::activate, onDismiss = vm::cancelActivate) }
     NoticeHost(notice, vm::dismissNotice)
 }
 
@@ -259,7 +263,7 @@ private fun StrictInactive(vm: StrictViewModel, st: StrictUi) {
     }
     val blocking = LocalBlockingColors.current
     Button(
-        onClick = vm::activate,
+        onClick = vm::requestActivate,
         enabled = !busy,
         colors = ButtonDefaults.buttonColors(containerColor = blocking.accent, contentColor = blocking.onAccent),
         modifier = Modifier
@@ -271,6 +275,43 @@ private fun StrictInactive(vm: StrictViewModel, st: StrictUi) {
         Spacer(Modifier.size(8.dp))
         Text("Turn on Strict Mode", style = MaterialTheme.typography.titleMedium)
     }
+}
+
+/** "Turn on Strict Mode?" with the summary; confirm tag `strict_confirm_confirm`, cancel `strict_confirm_dismiss`. */
+@Composable
+private fun ActivationConfirm(sum: StrictSummary, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier
+            .debugRoot()
+            .testTag("strict_confirm"),
+        icon = { Icon(Icons.Default.Lock, contentDescription = null) },
+        title = { Text("Turn on Strict Mode?") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("How it ends: ${sum.method}", style = MaterialTheme.typography.titleSmall)
+                Text(sum.ends, modifier = Modifier.testTag("strict_confirm_ends"))
+                Text("What it locks", style = MaterialTheme.typography.titleSmall)
+                if (sum.locks.isEmpty()) {
+                    Text("Nothing extra: schedules can still be edited, and Settings stays open.")
+                } else {
+                    sum.locks.forEach { Text("• $it") }
+                }
+                Text(sum.applies, modifier = Modifier.testTag("strict_confirm_applies"))
+                Text(
+                    "Until then, the only way out is the emergency unblock, once every 30 days.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, modifier = Modifier.testTag("strict_confirm_confirm")) { Text("Turn on") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("strict_confirm_dismiss")) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -349,7 +390,7 @@ private fun ColumnScope.StrictOn(vm: StrictViewModel, st: StrictUi) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                Format.unlockCondition(row, st.display, st.now, st.elapsed, st.zone),
+                Format.unlockCondition(row, st.display, st.now, st.elapsed, st.zone, st.blockingNow),
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.testTag("strict_unlock_condition"),
             )

@@ -1,6 +1,7 @@
 package dev.brainrotprevention.ui.format
 
 import dev.brainrotprevention.engine.ActivationRefusal
+import dev.brainrotprevention.engine.QUICK_BLOCK_ID
 import dev.brainrotprevention.engine.Refusal
 import dev.brainrotprevention.engine.ScheduleEvaluator
 import dev.brainrotprevention.engine.ScheduleStatus
@@ -164,7 +165,8 @@ object Format {
         display: StrictDisplayState,
         now: Long,
         elapsed: Long,
-        zone: ZoneId
+        zone: ZoneId,
+        blockingNow: String = "",
     ): String = when (row.method) {
         StrictMethod.TIMER -> {
             val left = StrictPolicy.timerRemaining(row, now, elapsed)
@@ -175,11 +177,40 @@ object Format {
             if (display == StrictDisplayState.STANDBY) {
                 "Strict Mode is on standby: you can turn it off from the Strict tab after a 5-minute wait."
             } else {
-                "Strict Mode stays active while a followed schedule is blocking."
+                if (blockingNow.isNotEmpty()) {
+                    "Strict Mode stays active while a followed schedule is blocking: $blockingNow."
+                } else {
+                    "Strict Mode stays active while a followed schedule is blocking."
+                }
             }
         StrictMethod.CHARGER -> "Plug in the charger and tap Unlock on the Strict tab."
         StrictMethod.PIN -> "Enter the PIN on the Strict tab."
         StrictMethod.COOLDOWN -> "Wait ${row.cooldownMin} minutes on the Strict tab to unlock."
+    }
+
+    /**
+     * The followed schedules keeping SCHEDULES Strict Mode ACTIVE right now, with their until lines:
+     * "Focus until 17:00, Quick Block until you stop it" (empty when nothing followed blocks).
+     */
+    fun followedBlocking(
+        row: StrictModeRow,
+        schedules: List<Schedule>,
+        statuses: Map<Long, ScheduleStatus>,
+        now: Long,
+        zone: ZoneId
+    ): String {
+        if (!row.isOn || row.method != StrictMethod.SCHEDULES) return ""
+        val f = StrictPolicy.followed(row, schedules)
+        val names = schedules.associate { it.id to it.name } + (QUICK_BLOCK_ID to "Quick Block")
+        return statuses.values
+            .filter { it.scheduleId in f && it.blockingOrLaunchesExhausted }
+            .sortedBy { if (it.scheduleId == QUICK_BLOCK_ID) Long.MIN_VALUE else it.scheduleId }
+            .mapNotNull { st ->
+                val name = names[st.scheduleId] ?: return@mapNotNull null
+                val until = if (st.blocking) until(st.blockUntil, now, zone) else "(no opens left)"
+                "$name $until".trim()
+            }
+            .joinToString(", ")
     }
 
     fun refusal(r: Refusal): String = when (r) {

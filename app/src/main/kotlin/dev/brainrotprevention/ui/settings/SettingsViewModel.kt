@@ -11,17 +11,33 @@ import dev.brainrotprevention.ui.platform.UiApp
 import dev.brainrotprevention.ui.platform.UiHealth
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
+    private companion object {
+        const val SAVE_DEBOUNCE_MS = 400L
+    }
+
     private val g = deps.graph
 
-    val prefs: StateFlow<Prefs?> = g.settings.prefs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /** Edits not saved yet (display shape: `dayStartHour` = in force, `pendingDayStartHour` = wanted). */
+    private val local = MutableStateFlow<Prefs?>(null)
+    private var saveJob: Job? = null
+    private var unsaved: Prefs? = null
+
+    /** The stored prefs, overlaid with edits still waiting for their (debounced) save. */
+    val prefs: StateFlow<Prefs?> = combine(g.settings.prefs, local) { db, l -> l ?: db }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val excluded: StateFlow<Set<String>> = g.settings.excludedBrowsers.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -50,20 +66,47 @@ class SettingsViewModel(private val deps: UiDeps) : ViewModel() {
         _health.value = runCatching { deps.platform.health.check() }.getOrDefault(UiHealth())
     }
 
-    fun label(pkg: String) = deps.platform.apps.label(pkg)
+    fun label(pkg: String) = deps.appLabel(pkg)
 
     fun show(n: Notice?) {
         _notice.value = n
     }
 
+    /**
+     * Applies [f] to the shown prefs (including edits not saved yet, so rapid stepper taps all count), shows the
+     * result at once and saves it after a short pause in the tapping.
+     */
     fun editPrefs(f: (Prefs) -> Prefs) {
-        val cur = prefs.value ?: return
+        val shown = prefs.value ?: return
         // savePrefs takes the wanted day start in dayStartHour; pass the effective one when it isn't changing.
-        val base = cur.copy(dayStartHour = cur.pendingDayStartHour ?: cur.dayStartHour)
-        viewModelScope.launch {
-            val r = g.settings.savePrefs(f(base))
-            _notice.value = r.notice()
-            if (r.isOk) deps.platform.engine.requestEvaluate()
+        val wanted = f(shown.copy(dayStartHour = shown.pendingDayStartHour ?: shown.dayStartHour))
+        val display = wanted.copy(
+            dayStartHour = shown.dayStartHour,
+            pendingDayStartHour = wanted.dayStartHour.takeIf { it != shown.dayStartHour },
+        )
+        local.value = display
+        unsaved = wanted
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
+            delay(SAVE_DEBOUNCE_MS)
+            unsaved = null
+            // Only the wait is cancellable: a save that has started always finishes.
+            withContext(NonCancellable) {
+                val r = g.settings.savePrefs(wanted)
+                _notice.value = r.notice()
+                if (r.isOk) deps.platform.engine.requestEvaluate()
+                // Back to the stored value (also undoes a refused edit), unless a newer edit is waiting.
+                if (local.value === display) local.value = null
+            }
+        }
+    }
+
+    /** An edit still in its debounce wait when the screen goes away is saved anyway. */
+    override fun onCleared() {
+        val pending = unsaved ?: return
+        unsaved = null
+        deps.launchDetached {
+            if (g.settings.savePrefs(pending).isOk) deps.platform.engine.requestEvaluate()
         }
     }
 

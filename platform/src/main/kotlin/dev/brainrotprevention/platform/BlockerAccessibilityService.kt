@@ -73,6 +73,7 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         super.onServiceConnected()
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         g.service = this
+        g.health.onServiceConnected(true)
         Brp.event("service", "name" to "a11y", "state" to "connected")
         registerReceivers()
         g.sensors.start()
@@ -91,7 +92,13 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
             val pm = getSystemService(PowerManager::class.java)
             while (isActive) {
                 delay(POLL_MS)
-                if (pm?.isInteractive != false && g.engineHost.needsPolling()) g.engineHost.requestEvaluate("poll")
+                if (pm?.isInteractive != false && g.engineHost.needsPolling()) {
+                    g.engineHost.requestEvaluate("poll")
+                } else {
+                    // Screen off or nothing armed: sleep until SCREEN_ON or the next evaluation changes the
+                    // status (an alarm, a config change, a sensor), instead of waking every 300 ms.
+                    g.engineHost.awaitPollingNeeded { pm?.isInteractive != false }
+                }
             }
         }
     }
@@ -158,11 +165,12 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
                     urlReader.clear()
                     g.engineHost.requestEvaluate("screen-off")
                 }
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> g.engineHost.requestEvaluate("screen-on")
-                LocationManager.PROVIDERS_CHANGED_ACTION -> {
-                    g.sensors.geofences.registerAll()
-                    g.sensors.start()
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    g.engineHost.wakePolling()
+                    g.engineHost.requestEvaluate("screen-on")
                 }
+                // start() re-registers the Wi-Fi callback and the geofences (once).
+                LocationManager.PROVIDERS_CHANGED_ACTION -> g.sensors.start()
                 Intent.ACTION_SHUTDOWN -> {
                     val pending = goAsync()
                     g.scope.launch {
@@ -208,8 +216,9 @@ class BlockerAccessibilityService : AccessibilityService(), LifecycleOwner, Save
         if (g.service !== this) return
         pollJob?.cancel()
         unregisterReceivers()
-        enforcer.hideAll("service-stop")
+        enforcer.release("service-stop")
         g.service = null
+        g.health.onServiceConnected(false)
         g.notifier.cancelStatus()
         Brp.event("service", "name" to "a11y", "state" to "disconnected")
         g.engineHost.requestEvaluate("service-disconnected")

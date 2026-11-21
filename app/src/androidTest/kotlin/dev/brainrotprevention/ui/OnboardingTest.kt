@@ -2,6 +2,7 @@ package dev.brainrotprevention.ui
 
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,6 +15,8 @@ import dev.brainrotprevention.ui.platform.UiGrant
 import dev.brainrotprevention.ui.platform.UiGrantStatus
 import dev.brainrotprevention.ui.platform.UiHealth
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,6 +101,32 @@ class OnboardingFlowTest {
         rule.tap("onboarding_fix_accessibility")
         rule.waitForTag("onboarding_restricted")
         rule.scrollTap("onboarding_app_info")
+        rule.waitUntil(5_000) { env.health.appDetailsOpened == 1 }
+        assertEquals(listOf(UiGrant.ACCESSIBILITY), env.health.opened)
+    }
+
+    /** §11.3: location is asked only once a Wi-Fi/place trigger exists; battery and device admin aren't onboarding steps. */
+    @Test
+    fun checklistShowsOnlyWhatBlockingNeedsNow() {
+        env.health.health = UiHealth(
+            UiGrant.entries.map {
+                UiGrantStatus(
+                    it,
+                    granted = it == UiGrant.ACCESSIBILITY || it == UiGrant.USAGE_ACCESS,
+                    required =
+                    it == UiGrant.ACCESSIBILITY || it == UiGrant.USAGE_ACCESS
+                )
+            },
+        )
+        rule.show(env, Routes.ONBOARDING)
+        rule.tap("onboarding_skip_intro")
+        rule.waitForTag("onboarding_permissions")
+        listOf("accessibility", "usage_access", "notification_listener", "post_notifications", "exact_alarms").forEach {
+            rule.waitForTag("onboarding_$it")
+        }
+        listOf("location_fine", "location_background", "battery_optimization", "device_admin").forEach {
+            assertTrue(it, rule.onAllNodesWithTag("onboarding_$it", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        }
     }
 
     @Test

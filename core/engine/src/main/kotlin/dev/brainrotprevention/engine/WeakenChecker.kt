@@ -111,7 +111,10 @@ object WeakenChecker {
         // Trigger structure
         if (old.combine == Combine.ANY && new.combine == Combine.ALL) return refuse(Refusal.COMBINE_TIGHTENED)
         triggerRows(old, new)?.let { return refuse(it) }
-        if (!covers(coverage(new), coverage(old))) return refuse(Refusal.TIME_COVERAGE_REDUCED)
+        // With no time windows on either side the bitmap only encodes the [V2-N7] combine rule, which the
+        // combine and trigger-row checks above already decide (ALL→ANY with one trigger type is no weakening).
+        val timePresent = old.timeWindows.isNotEmpty() || new.timeWindows.isNotEmpty()
+        if (timePresent && !covers(coverage(new), coverage(old))) return refuse(Refusal.TIME_COVERAGE_REDUCED)
         // Limits
         limits(old, new)?.let { return refuse(it) }
         // Lists
@@ -197,21 +200,20 @@ object WeakenChecker {
             EditCheck.Allowed
         }
 
-    /** While ON: only extending TIMER and following more (followAllSchedules false→true) (§9.4 "Strict"). */
+    /**
+     * While ON: only extending TIMER and following more (followAllSchedules false→true) (§9.4 "Strict").
+     * Every other column (PIN lockout, tamper bookkeeping, activatedAt, …) must stay as it is.
+     */
     fun checkStrict(old: StrictModeRow, new: StrictModeRow): EditCheck {
-        val same = old.state == new.state &&
-            old.options == new.options &&
-            old.method == new.method &&
-            old.cooldownMin == new.cooldownMin &&
-            old.pinHash == new.pinHash &&
-            old.pinSalt == new.pinSalt
+        val same = old.copy(endsAt = null, endsAtElapsed = null, followAllSchedules = false) ==
+            new.copy(endsAt = null, endsAtElapsed = null, followAllSchedules = false)
         if (!same) return refuse(Refusal.STRICT_CHANGED)
         if (old.followAllSchedules && !new.followAllSchedules) return refuse(Refusal.UNFOLLOWED)
         if (old.method == StrictMethod.TIMER) {
             val wallOk = (new.endsAt ?: Long.MIN_VALUE) >= (old.endsAt ?: Long.MIN_VALUE)
             val elOk = (new.endsAtElapsed ?: Long.MIN_VALUE) >= (old.endsAtElapsed ?: Long.MIN_VALUE)
             if (!wallOk || !elOk) return refuse(Refusal.STRICT_CHANGED)
-        } else if (old.endsAt != new.endsAt) {
+        } else if (old.endsAt != new.endsAt || old.endsAtElapsed != new.endsAtElapsed) {
             return refuse(Refusal.STRICT_CHANGED)
         }
         return EditCheck.Allowed
@@ -282,11 +284,16 @@ object EditGuard {
     ): EditCheck =
         if (isLocked(row, display, schedules, QUICK_BLOCK_ID)) WeakenChecker.checkQuickBlock(old, new, now) else EditCheck.Allowed
 
+    /**
+     * Excluded browsers and `dayStartHour` are global: they weaken the followed schedules too (an excluded
+     * browser is never read or blocked; a new day start can refill DAILY budgets), so they are locked in
+     * STANDBY as well as in ACTIVE.
+     */
     fun checkExcludedBrowsers(row: StrictModeRow, display: StrictDisplayState, old: Set<String>, new: Set<String>): EditCheck =
-        if (scope(row, display) == LockScope.ALL) WeakenChecker.checkExcludedBrowsers(old, new) else EditCheck.Allowed
+        if (scope(row, display) != LockScope.NONE) WeakenChecker.checkExcludedBrowsers(old, new) else EditCheck.Allowed
 
     fun checkPrefs(row: StrictModeRow, display: StrictDisplayState, old: Prefs, new: Prefs): EditCheck =
-        if (scope(row, display) == LockScope.ALL) WeakenChecker.checkPrefs(old, new) else EditCheck.Allowed
+        if (scope(row, display) != LockScope.NONE) WeakenChecker.checkPrefs(old, new) else EditCheck.Allowed
 
     /** Strict row edits are restricted whenever Strict Mode is ON (any option set). */
     fun checkStrict(old: StrictModeRow, new: StrictModeRow): EditCheck =

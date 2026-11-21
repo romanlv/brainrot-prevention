@@ -24,6 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
 class Sensors internal constructor(private val app: Context, private val g: PlatformGraph) {
     @Volatile private var realSsid: String? = null
 
+    /** SSID per connected Wi-Fi network: losing one network (roaming, handover) keeps the other's SSID. */
+    private val ssidByNetwork = ConcurrentHashMap<Network, String>()
+
     @Volatile private var loggedSsid: Any? = UNSET
 
     /** Debug override of the SSID: [UNSET] = use the real sensor. */
@@ -43,20 +46,21 @@ class Sensors internal constructor(private val app: Context, private val g: Plat
     fun start() {
         val cm = app.getSystemService(ConnectivityManager::class.java) ?: return
         callback?.let { runCatching { cm.unregisterNetworkCallback(it) } }
+        ssidByNetwork.clear() // the new callback reports every current network again
         val req = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
         val cb = if (Build.VERSION.SDK_INT >= 31) {
             object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    setReal((caps.transportInfo as? WifiInfo)?.ssid)
+                    setReal(network, (caps.transportInfo as? WifiInfo)?.ssid)
                 }
 
-                override fun onLost(network: Network) = setReal(null)
+                override fun onLost(network: Network) = setReal(network, null)
             }
         } else {
             object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = setReal(legacySsid())
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = setReal(network, legacySsid())
 
-                override fun onLost(network: Network) = setReal(null)
+                override fun onLost(network: Network) = setReal(network, null)
             }
         }
         try {
@@ -71,8 +75,10 @@ class Sensors internal constructor(private val app: Context, private val g: Plat
     @Suppress("DEPRECATION")
     private fun legacySsid(): String? = app.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
 
-    private fun setReal(raw: String?) {
-        realSsid = clean(raw)
+    private fun setReal(network: Network, raw: String?) {
+        val ssid = clean(raw)
+        if (ssid == null) ssidByNetwork.remove(network) else ssidByNetwork[network] = ssid
+        realSsid = ssidByNetwork.values.minOrNull()
         if (ssidOverride === UNSET) changed()
     }
 

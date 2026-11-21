@@ -17,6 +17,7 @@ import dev.brainrotprevention.engine.StrictPolicy
 import dev.brainrotprevention.model.PolicyClock
 import dev.brainrotprevention.model.Schedule
 import dev.brainrotprevention.model.SensorState
+import dev.brainrotprevention.model.StrictDisplayState
 import dev.brainrotprevention.model.StrictMethod
 import dev.brainrotprevention.model.StrictModeRow
 import dev.brainrotprevention.model.StrictOptions
@@ -64,16 +65,32 @@ class FakeEngine : EnginePort {
 class FakeHealth(var health: UiHealth = allGranted(), var openResult: FixResult = FixResult.OPENED) : HealthPort {
     val opened = mutableListOf<UiGrant>()
 
+    /** How often App info (the restricted-settings path) was opened. */
+    var appDetailsOpened = 0
+
+    /**
+     * When set, decides "Settings guard active" (§9.3) instead of [openResult]: true → LOCKED_BY_STRICT and nothing
+     * is opened. [TestEnv] wires it to the real strict row + displayed state.
+     */
+    var settingsGuard: (() -> Boolean)? = null
+
     override fun check() = health
 
+    private fun result(): FixResult = settingsGuard?.let { if (it()) FixResult.LOCKED_BY_STRICT else FixResult.OPENED } ?: openResult
+
     override fun open(activity: Activity, grant: UiGrant): FixResult {
-        opened += grant
-        return openResult
+        val r = result()
+        if (r == FixResult.OPENED) opened += grant
+        return r
     }
 
     override fun runtimePermission(grant: UiGrant): String? = null
 
-    override fun openAppDetails(activity: Activity) = openResult
+    override fun openAppDetails(activity: Activity): FixResult {
+        val r = result()
+        if (r == FixResult.OPENED) appDetailsOpened++
+        return r
+    }
 
     companion object {
         fun allGranted() = UiHealth(
@@ -122,6 +139,20 @@ class TestEnv {
     fun close() {
         graph.close()
         dir.deleteRecursively()
+    }
+
+    /**
+     * The Settings guard computed from the real strict row and displayed state, as the platform decides it (§9.3):
+     * ON with BLOCK_SETTINGS and displayed ACTIVE.
+     */
+    fun useRealSettingsGuard() {
+        health.settingsGuard = {
+            runBlocking {
+                val row = graph.strict.get()
+                val display = graph.strictGate.display(graph.snapshots.load())
+                row.isOn && row.has(StrictOptions.BLOCK_SETTINGS) && display == StrictDisplayState.ACTIVE
+            }
+        }
     }
 
     fun <T> ok(r: WriteResult<T>): T {

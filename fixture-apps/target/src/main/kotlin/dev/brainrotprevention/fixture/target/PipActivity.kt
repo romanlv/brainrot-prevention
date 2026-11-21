@@ -13,13 +13,16 @@ import android.widget.TextView
 
 /**
  * A "video" screen: holds a silent, PLAYING MediaSession and enters picture-in-picture
- * when the user leaves it, or right away with `--ez enterPip true`.
+ * when the user leaves it, or right away with `--ez enterPip true`. With `--ez noPip true` it never enters PiP
+ * (background playback). The session's play/pause transport controls change its state.
  */
 class PipActivity : Activity() {
     private var session: MediaSession? = null
+    private var noPip = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        noPip = intent?.getBooleanExtra("noPip", false) == true
         setContentView(
             TextView(this).apply {
                 text = "BRP fixture PiP"
@@ -34,15 +37,30 @@ class PipActivity : Activity() {
                     .build()
             )
             setCallback(object : MediaSession.Callback() {
+                override fun onPlay() {
+                    setPlaybackState(
+                        PlaybackState.Builder()
+                            .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE)
+                            .setState(PlaybackState.STATE_PLAYING, 0L, 1f)
+                            .build()
+                    )
+                    Fix.log("media", "state" to "playing")
+                }
+
                 override fun onPause() {
-                    setPlaybackState(PlaybackState.Builder().setState(PlaybackState.STATE_PAUSED, 0L, 0f).build())
+                    setPlaybackState(
+                        PlaybackState.Builder()
+                            .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE)
+                            .setState(PlaybackState.STATE_PAUSED, 0L, 0f)
+                            .build()
+                    )
                     Fix.log("media", "state" to "paused")
                 }
             })
             isActive = true
         }
         Fix.log("media", "state" to "playing")
-        setPictureInPictureParams(params())
+        if (!noPip) setPictureInPictureParams(params())
         handle(intent)
     }
 
@@ -65,7 +83,7 @@ class PipActivity : Activity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < 31) enterPictureInPictureMode(params())
+        if (!noPip && Build.VERSION.SDK_INT < 31) enterPictureInPictureMode(params())
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {

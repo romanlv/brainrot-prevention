@@ -53,15 +53,21 @@ import dev.brainrotprevention.ui.format.Format
 import kotlinx.coroutines.launch
 
 /**
- * Websites and keywords (§7.3, §12): typed input with a live preview, a domain-vs-keyword choice for URLs with a
+ * Websites and keywords (§7.3, §12): typed input (hoisted: [input], so Save can add what was typed) with a live preview, a domain-vs-keyword choice for URLs with a
  * path, the anywhere-in-URL toggle for keywords, bulk paste and CSV import with added/duplicate/invalid counts.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun WebRulesEditor(rules: List<WebRule>, onChange: (List<WebRule>) -> Unit, verb: String = "Blocks") {
-    var kind by rememberSaveable { mutableStateOf(WebRuleKind.DOMAIN) }
-    var text by rememberSaveable { mutableStateOf("") }
-    var anywhere by rememberSaveable { mutableStateOf(false) }
+fun WebRulesEditor(
+    rules: List<WebRule>,
+    onChange: (List<WebRule>) -> Unit,
+    input: WebInput,
+    onInput: (WebInput) -> Unit,
+    verb: String = "Blocks",
+) {
+    val kind = input.kind
+    val text = input.text
+    val anywhere = input.anywhere
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var bulkOpen by rememberSaveable { mutableStateOf(false) }
     val preview = EditorOps.preview(kind, text, anywhere, verb)
@@ -75,7 +81,7 @@ fun WebRulesEditor(rules: List<WebRule>, onChange: (List<WebRule>) -> Unit, verb
         } else {
             onChange(next)
             message = null
-            text = ""
+            onInput(input.copy(text = ""))
         }
     }
 
@@ -98,14 +104,14 @@ fun WebRulesEditor(rules: List<WebRule>, onChange: (List<WebRule>) -> Unit, verb
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(
                 selected = kind == WebRuleKind.DOMAIN,
-                onClick = { kind = WebRuleKind.DOMAIN },
+                onClick = { onInput(input.copy(kind = WebRuleKind.DOMAIN)) },
                 shape = SegmentedButtonDefaults.itemShape(0, 2),
                 modifier = Modifier.testTag("web_kind_domain"),
                 icon = {},
             ) { Text("Website") }
             SegmentedButton(
                 selected = kind == WebRuleKind.KEYWORD,
-                onClick = { kind = WebRuleKind.KEYWORD },
+                onClick = { onInput(input.copy(kind = WebRuleKind.KEYWORD)) },
                 shape = SegmentedButtonDefaults.itemShape(1, 2),
                 modifier = Modifier.testTag("web_kind_keyword"),
                 icon = {},
@@ -114,7 +120,7 @@ fun WebRulesEditor(rules: List<WebRule>, onChange: (List<WebRule>) -> Unit, verb
         OutlinedTextField(
             value = text,
             onValueChange = {
-                text = it
+                onInput(input.copy(text = it))
                 message = null
             },
             label = { Text(if (kind == WebRuleKind.DOMAIN) "Website, e.g. reddit.com" else "Keyword, e.g. casino") },
@@ -143,7 +149,7 @@ fun WebRulesEditor(rules: List<WebRule>, onChange: (List<WebRule>) -> Unit, verb
                 subtitle = "Also matches paths and searches. Only works where the browser shows the full address; some browsers " +
                     "show just the site name.",
                 checked = anywhere,
-                onChange = { anywhere = it },
+                onChange = { onInput(input.copy(anywhere = it)) },
                 tag = "web_anywhere",
             )
         }

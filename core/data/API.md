@@ -54,12 +54,14 @@ Nothing is written when the result is not `Ok`.
 - `quickBlock: Flow<QuickBlock>`, `suspend get()`.
 - `save(new: QuickBlock): WriteResult<Unit>` (items + flags + active/until; validated; `EditGuard.checkQuickBlock`).
 - `start(until: Long?)` (null = no timer; `Invalid` if no items), `stop()` (QUICK_BLOCK_STOPPED while locked).
-- Unguarded: `markExpired()` for `cleanup.quickBlockExpired`.
+- Unguarded: `markExpired(now = clock.now())` for `cleanup.quickBlockExpired` (only if the stored `until <= now`).
+  `save` refuses `active = true` with no items (`Invalid`).
 
 ## StrictRepository (`graph.strict`)
 - `strict: Flow<StrictModeRow>` (default INACTIVE row when none), `emergencyLog: Flow<List<EmergencyUnblock>>`,
   `suspend get()`, `suspend getEmergencyLog()`.
 - `edit(new): WriteResult<Unit>` — user edits (extend TIMER, followAll false→true); `EditGuard.checkStrict`.
+- `extendTimer(extraMs): WriteResult<Unit>` — reads the row under the write lock; `NotFound` when no TIMER is running.
 - Unguarded, for rows produced by `StrictPolicy`: `writePolicyResult(row)` (activate, unlock*, wrong-PIN,
   `deactivated` on `cleanup.strictEnd`, `afterBoot`), `writeTamperCheck(t: TamperCheck)` (row + whole log, no-op
   if `!t.changed`), `writeEmergency(row, entry): Long` (row + new log entry, one transaction).
@@ -72,7 +74,8 @@ Nothing is written when the result is not `Ok`.
   (SETTING_LOCKED); `onboardingDone` is not changed here.
 - `applyDayStartHour(hour)` (engine event `DayStartHourApplied`), `setOnboardingDone(b)`,
   `setLastPackageSnapshot(set)` — unguarded.
-- `setExcludedBrowsers(set): WriteResult<Unit>` (adding = EXCLUDED_BROWSER_ADDED while ACTIVE+LOCK_EDITING).
+- `setExcludedBrowsers(set): WriteResult<Unit>` (adding = EXCLUDED_BROWSER_ADDED while ON with LOCK_EDITING, ACTIVE or
+  STANDBY; `savePrefs` likewise refuses a `dayStartHour` change).
 - `excludeFromBlockScreen(pkg): WriteResult<Unit>` — "Not a browser? Allow"; `Locked(EXCLUDED_BROWSER_ADDED)`
   whenever Strict Mode is ON (§7.7).
 
@@ -118,7 +121,8 @@ if (r.countersToSave.isNotEmpty()) graph.counters.save(r.countersToSave)    // u
 `StateContributors.add { "statuses" to jsonElement }`.
 
 ## Schema
-Room v1, `schemas/dev.brainrotprevention.data.db.BrpDatabase/1.json`; enums stored by name; singleton rows
+Room v2 (auto-migration from v1: nullable `usage_counter.period`, `usage_counter.holdUntil`, `strict_mode.bootCount`),
+`schemas/dev.brainrotprevention.data.db.BrpDatabase/{1,2}.json`; enums stored by name; singleton rows
 `quick_block.id = 1`, `strict_mode.id = 1`; `quick_block_web` PK `(kind, value)`; `notification_count` PK
 `(packageName, day)`. Never `REPLACE` a schedule (it would cascade-delete children). A schema change bumps the
 version, exports the new JSON and adds a case to `MigrationTest`.

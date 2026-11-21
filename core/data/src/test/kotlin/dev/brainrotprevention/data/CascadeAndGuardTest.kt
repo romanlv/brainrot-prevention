@@ -85,7 +85,75 @@ class CascadeAndGuardTest : GraphTest() {
         assertEquals(T0 + 5000, s.manualUntil)
         g.quickBlock.save(QuickBlock(apps = listOf("com.q.a"))).ok()
         g.quickBlock.start(T0 + 3000).ok()
+        g.quickBlock.markExpired() // now = T0 + 2000: not expired yet
+        assertEquals(true, g.snapshots.current().quickBlock.active)
+        clock.wall = T0 + 3000
         g.quickBlock.markExpired()
         assertEquals(false, g.snapshots.current().quickBlock.active)
+    }
+
+    /** Review round 1, #12: the engine saw the old Quick Block expire, the user restarted it, then cleanup ran. */
+    @Test
+    fun markExpiredDoesNotStopARestartedQuickBlock() = runBlocking {
+        g.quickBlock.save(QuickBlock(apps = listOf("com.q.a"))).ok()
+        g.quickBlock.start(T0 + 1000).ok()
+        clock.wall = T0 + 2000 // the engine computes quickBlockExpired here …
+        g.quickBlock.start(null).ok() // … the user restarts it (no timer) …
+        g.quickBlock.markExpired() // … and the cleanup lands.
+        assertEquals(true, g.quickBlock.get().active)
+        g.quickBlock.start(T0 + 60_000).ok()
+        g.quickBlock.markExpired()
+        assertEquals(true, g.quickBlock.get().active)
+    }
+
+    /** Review round 1, #12: save() refuses an active Quick Block without items (§5.5), like start(). */
+    @Test
+    fun activeEmptyQuickBlockIsRefusedBySave() = runBlocking {
+        val r = g.quickBlock.save(QuickBlock(active = true))
+        assertTrue(r.describe(), r is WriteResult.Invalid)
+        assertEquals(false, g.quickBlock.get().active)
+        g.quickBlock.save(QuickBlock(active = false)).ok()
+    }
+
+    /** Review round 1, #10: extending a timer that already ended is a NotFound result, not an exception. */
+    @Test
+    fun extendTimerAfterTheTimerEndedIsARefusal() = runBlocking {
+        val r = g.strict.extendTimer(60_000)
+        assertTrue(r.describe(), r is WriteResult.NotFound)
+        g.strict.writePolicyResult(strictOn())
+        val before = g.strict.get()
+        g.strict.extendTimer(60_000).ok()
+        assertEquals(before.endsAt!! + 60_000, g.strict.get().endsAt)
+        assertEquals(before.endsAtElapsed!! + 60_000, g.strict.get().endsAtElapsed)
+        g.strict.writePolicyResult(dev.brainrotprevention.engine.StrictPolicy.deactivated(g.strict.get()))
+        assertTrue(g.strict.extendTimer(60_000) is WriteResult.NotFound)
+    }
+
+    /** Review round 1, #1: in STANDBY, excluded browsers and dayStartHour are locked too. */
+    @Test
+    fun standbyLocksExcludedBrowsersAndDayStart() = runBlocking {
+        // A followed schedule that is not armed now (its window is in the past) → STANDBY.
+        val id = g.schedules.save(
+            schedule().copy(
+                timeWindows = listOf(
+                    dev.brainrotprevention.model.TimeWindow(days = dev.brainrotprevention.model.Weekdays.ALL, startMin = 0, endMin = 60)
+                ),
+                limits = emptyList(),
+                blockUnsupportedBrowsers = true,
+            )
+        ).ok()
+        g.strict.writePolicyResult(
+            dev.brainrotprevention.model.StrictModeRow(
+                state = dev.brainrotprevention.model.StrictState.ON,
+                options = StrictOptions.LOCK_EDITING,
+                method = dev.brainrotprevention.model.StrictMethod.SCHEDULES,
+                followAllSchedules = true,
+            )
+        )
+        assertEquals(dev.brainrotprevention.model.StrictDisplayState.STANDBY, g.strictGate.display(g.snapshots.current()))
+        assertEquals(WriteResult.Locked(Refusal.EXCLUDED_BROWSER_ADDED), g.settings.setExcludedBrowsers(setOf("org.mozilla.focus")))
+        assertEquals(WriteResult.Locked(Refusal.SETTING_LOCKED), g.settings.savePrefs(g.settings.getPrefs().copy(dayStartHour = 12)))
+        g.settings.savePrefs(g.settings.getPrefs().copy(limitWarningMin = 9)).ok()
+        assertTrue(g.schedules.get(id) != null)
     }
 }

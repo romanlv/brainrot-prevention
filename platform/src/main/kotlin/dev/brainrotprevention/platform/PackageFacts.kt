@@ -48,6 +48,30 @@ class PackageFacts internal constructor(private val app: Context, private val g:
     @Volatile var exempt: Set<String> = emptySet()
         private set
 
+    /** The default launcher at the last [refresh]. */
+    @Volatile private var launcher: String? = null
+
+    @Volatile private var homeCheckedRt = 0L
+
+    /** The default HOME package; never "android" (resolver) or a guarded package (Settings' FallbackHome). */
+    private fun resolveHome(): String? =
+        runCatching {
+            pm.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+        }.getOrNull()?.takeIf { it != "android" && it !in strictGuards.settings && it !in strictGuards.installer }
+
+    /**
+     * True when the default launcher differs from the one of the last [refresh] (changing it sends no broadcast).
+     * Checked at most once per [HOME_CHECK_MS]; call from the engine dispatcher.
+     */
+    fun homeChanged(): Boolean {
+        val now = dev.brainrotprevention.platform.time.SystemTimeAndroid.elapsedRealtime()
+        if (launcher == null || now - homeCheckedRt < HOME_CHECK_MS) return false
+        homeCheckedRt = now
+        val home = resolveHome() ?: return false
+        return home != launcher
+    }
+
     private fun readAsset(name: String): String? = try {
         app.assets.open(name).bufferedReader().use { it.readText() }
     } catch (_: Exception) {
@@ -114,8 +138,10 @@ class PackageFacts internal constructor(private val app: Context, private val g:
         val out = LinkedHashSet<String>()
         out += app.packageName
         // default launcher
-        pm.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
-            ?.activityInfo?.packageName?.let { if (it != "android") out += it }
+        val home = resolveHome()
+        home?.let { out += it }
+        launcher = home ?: ""
+        homeCheckedRt = dev.brainrotprevention.platform.time.SystemTimeAndroid.elapsedRealtime()
         // active IME
         Settings.Secure.getString(app.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             ?.let { ComponentName.unflattenFromString(it)?.packageName }?.let { out += it }
@@ -150,6 +176,7 @@ class PackageFacts internal constructor(private val app: Context, private val g:
 
     companion object {
         const val WEBAPK_START_URL = "org.chromium.webapk.shell_apk.startUrl"
+        private const val HOME_CHECK_MS = 1_000L
         private val EXTRA_EXEMPT = listOf(
             "com.android.emergency",
             "com.google.android.apps.safetyhub",

@@ -1,14 +1,19 @@
 package dev.brainrotprevention.data.db
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-/** Schema v1 (SPEC §4). Schemas are exported to `core/data/schemas/`; every change ships a migration test. */
+/**
+ * Schema v2 (SPEC §4). Schemas are exported to `core/data/schemas/`; every change ships a migration test.
+ * v2: `usage_counter.period`, `usage_counter.holdUntil`, `strict_mode.bootCount` (nullable, auto-migrated).
+ */
 @Database(
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
     entities = [
         ScheduleEntity::class,
         TimeWindowEntity::class,

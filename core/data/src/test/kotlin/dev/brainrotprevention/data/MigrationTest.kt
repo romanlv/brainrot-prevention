@@ -32,6 +32,8 @@ class MigrationTest {
         }
         // Validates the on-disk schema against 1.json.
         helper.runMigrationsAndValidate(DB, 1, true).close()
+        // v1 → v2 (auto-migration: usage_counter.period/holdUntil, strict_mode.bootCount), validated against 2.json.
+        helper.runMigrationsAndValidate(DB, 2, true).close()
 
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         val room = Room.databaseBuilder(ctx, BrpDatabase::class.java, DB).build()

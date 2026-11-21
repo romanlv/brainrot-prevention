@@ -68,6 +68,10 @@ class AlarmReceiver : BroadcastReceiver() {
             try {
                 g.alarms.invalidate()
                 g.engineHost.onAlarm("alarm:${intent.getStringExtra("kind")}")
+                // The alarm path runs even when the accessibility service is dead (§11.6).
+                if (g.service == null) g.health.refresh()
+            } catch (t: Throwable) {
+                Brp.event("error", "where" to "alarm", "msg" to t.toString())
             } finally {
                 pending.finish()
             }

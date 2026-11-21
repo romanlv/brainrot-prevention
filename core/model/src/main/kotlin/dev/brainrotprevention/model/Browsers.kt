@@ -26,10 +26,19 @@ data class BrowserEntry(
     val canEditUrl: Boolean = true,
 )
 
-/** `strict_guards.json` (§9.3). */
+/**
+ * `strict_guards.json` (§9.3). Beyond the spec's list, the OEM screens that can turn off an accessibility service
+ * are guarded too: Samsung's accessibility settings (`com.samsung.accessibility`) and Huawei's phone manager.
+ */
 @Serializable
 data class StrictGuards(
-    val settings: List<String> = listOf("com.android.settings", "com.miui.securitycenter", "com.samsung.android.lool"),
+    val settings: List<String> = listOf(
+        "com.android.settings",
+        "com.miui.securitycenter",
+        "com.samsung.android.lool",
+        "com.samsung.accessibility",
+        "com.huawei.systemmanager",
+    ),
     val installer: List<String> = listOf("com.google.android.packageinstaller", "com.android.packageinstaller"),
 )
 
@@ -44,10 +53,17 @@ object PackageDefaults {
         "com.google.android.permissioncontroller",
     )
 
-    /** Matched by component (`pkg/.Cls` or `pkg/full.Cls`), not by package. */
-    val ALWAYS_EXEMPT_COMPONENTS: Set<String> = setOf("com.android.settings/.ConfirmDeviceCredentialActivity")
+    /**
+     * Matched by component (`pkg/.Cls` or `pkg/full.Cls`), not by package. Class names as resolved on
+     * API 28–37 (`cmd package query-activities -a android.app.action.CONFIRM_DEVICE_CREDENTIAL`).
+     */
+    val ALWAYS_EXEMPT_COMPONENTS: Set<String> = setOf(
+        "com.android.settings/.password.ConfirmDeviceCredentialActivity",
+        "com.android.settings/.password.ConfirmDeviceCredentialActivity\$InternalActivity",
+    )
 
-    const val DEVICE_ADMIN_ADD_COMPONENT = "com.android.settings/.DeviceAdminAdd"
+    /** `android.app.action.ADD_DEVICE_ADMIN` resolves here on API 28–37. */
+    const val DEVICE_ADMIN_ADD_COMPONENT = "com.android.settings/.applications.specialaccess.deviceadmin.DeviceAdminAdd"
 
     val ALLOWLIST_ESSENTIALS: Set<String> = setOf(
         "com.android.documentsui",
