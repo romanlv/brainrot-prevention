@@ -41,8 +41,14 @@ gaps and design deviations are tracked in [`docs/DEVIATIONS.md`](docs/DEVIATIONS
 
 There's no Play Store build, so you need to sideload it.
 
-1. Build a signed APK (see below), copy it to the phone, and open it, or install from a computer with
-   `adb install app-release.apk`.
+**[⬇ Download the latest APK](https://github.com/romanlv/brainrot-prevention/releases/latest)**. Each release lists
+the APK's SHA-256 and the signing certificate's fingerprint. Every release is signed with the same key, so updates
+install over the old version and keep your settings. To get updates automatically, add this repository's URL to
+[Obtainium](https://github.com/ImranR98/Obtainium).
+
+1. Open the release page on the phone, download the `.apk` and open it. Android asks once to allow installs from
+   your browser. Or install from a computer with `adb install brainrot-prevention-<version>.apk`, or build your own
+   (see below).
 2. Open the app. The setup checklist asks for four things:
    - **Accessibility service.** Required. On Android 13+ the toggle is greyed out for sideloaded apps ("Restricted
      setting"). Go to **Settings → Apps → Brainrot Prevention → ⋮ → Allow restricted settings**, then turn the service
