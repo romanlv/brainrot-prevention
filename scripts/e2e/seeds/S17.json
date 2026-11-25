@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "exportedAt": 0,
+  "schedules": [
+    {
+      "name": "Unsupported",
+      "icon": "⛔",
+      "sortOrder": 0,
+      "enabled": true,
+      "mode": "BLOCKLIST",
+      "combine": "ANY",
+      "allowlistWeb": "OPEN",
+      "blockNotifications": false,
+      "blockUnsupportedBrowsers": true,
+      "strictFollowed": false,
+      "timeWindows": [],
+      "limits": [],
+      "wifi": [],
+      "locations": [],
+      "apps": [],
+      "webRules": [
+        {
+          "kind": "DOMAIN",
+          "value": "example.com",
+          "anywhereInUrl": false
+        }
+      ]
+    }
+  ],
+  "quickBlock": {
+    "apps": [],
+    "webRules": [],
+    "blockNotifications": false
+  },
+  "excludedBrowsers": [],
+  "prefs": {
+    "dayStartHour": 0,
+    "limitWarningMin": 5,
+    "notifyBeforeStartMin": 0,
+    "notifyBeforePauseEndMin": 1,
+    "hidePauseOption": false
+  }
+}

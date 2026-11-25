@@ -124,7 +124,7 @@ this repository; [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) records where the im
 
 ## Status
 
-A personal project, used daily on a Pixel 9a. Version 1.0.3. Issues and pull requests are welcome.
+A personal project, used daily on a Pixel 9a. Version 1.0.4. Issues and pull requests are welcome.
 
 This is an independent app. It isn't affiliated with, or endorsed by, any other blocker app or by X Corp.
 

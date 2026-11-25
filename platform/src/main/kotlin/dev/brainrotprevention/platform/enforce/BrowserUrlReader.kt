@@ -24,9 +24,12 @@ import java.util.concurrent.ConcurrentHashMap
  * Reads are dropped only for windows that `getWindows()` no longer lists. A failed `getWindows()` or a listed window
  * whose root is null (a busy UI thread, a transition) keeps them (review round 3, minor 3).
  *
- * Flags `url_bar_missing` after 10 s in which a browser window had no URL bar (§7.2). That clock is kept for
- * [MISSING_GRACE_MS] after the browser leaves the foreground, so relaunching a web app that the browser draws
- * without a URL bar doesn't restart the 10 s each time (adversarial 5).
+ * Flags `url_bar_missing` after 10 s in which a browser window showed a web page without a URL bar (§7.2): a web
+ * app or TWA the browser draws itself. Windows without web content ([showsWebContent]: the browser's own History,
+ * Settings, Bookmarks and Downloads screens, menus, dialogs, its splash screen) don't count; counting them blocked
+ * Brave as "unsupported" after 10 s on its History screen, and again on every relaunch into that screen (1.0.4).
+ * The clock is kept for [MISSING_GRACE_MS] after the browser leaves the foreground, so relaunching a web app that
+ * the browser draws without a URL bar doesn't restart the 10 s each time (adversarial 5).
  */
 class BrowserUrlReader(private val service: AccessibilityService, private val browsers: () -> Map<String, BrowserEntry>) {
     data class Read(val url: String, val reliable: Boolean, val windowId: Int, val atRt: Long)
@@ -91,7 +94,12 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         for (root in roots) {
             val r = extractWindow(pkg, entry, root)
             changed = changed || r.changed
-            if (!r.hasBar && lastUrl.keys.none { it.pkg == pkg && it.windowId == root.windowId }) anyWithoutBar = true
+            if (!r.hasBar &&
+                lastUrl.keys.none { it.pkg == pkg && it.windowId == root.windowId } &&
+                showsWebContent(AndroidNode(root))
+            ) {
+                anyWithoutBar = true
+            }
         }
         if (roots.isEmpty()) return changed
         if (anyWithoutBar) {
@@ -257,8 +265,39 @@ class BrowserUrlReader(private val service: AccessibilityService, private val br
         leftRt.clear()
     }
 
+    /** The minimal node shape [showsWebContent] needs, so it can be unit-tested without Android. */
+    interface Node {
+        val className: String?
+        fun children(): List<Node>
+    }
+
+    private class AndroidNode(val n: AccessibilityNodeInfo) : Node {
+        override val className: String? get() = n.className?.toString()
+        override fun children(): List<Node> = (0 until n.childCount).mapNotNull { i -> n.getChild(i)?.let(::AndroidNode) }
+    }
+
     companion object {
         /** How long the url_bar_missing clock survives the browser leaving the foreground. */
         const val MISSING_GRACE_MS = 60_000L
+
+        /** Chromium (Chrome, Brave, Edge …) and the system WebView expose rendered web content under this class. */
+        const val WEB_CONTENT_CLASS = "android.webkit.WebView"
+        const val MAX_WEB_SEARCH_NODES = 500
+
+        /**
+         * True when [root]'s window shows a web page: a [WEB_CONTENT_CLASS] node within the first [maxNodes] nodes,
+         * breadth first (web content sits near the top of a browser window; native lists can be long).
+         */
+        fun showsWebContent(root: Node, maxNodes: Int = MAX_WEB_SEARCH_NODES): Boolean {
+            val queue = ArrayDeque<Node>().apply { add(root) }
+            var seen = 0
+            while (queue.isNotEmpty() && seen < maxNodes) {
+                val n = queue.removeFirst()
+                seen++
+                if (n.className == WEB_CONTENT_CLASS) return true
+                queue.addAll(n.children())
+            }
+            return false
+        }
     }
 }

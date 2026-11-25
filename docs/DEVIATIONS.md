@@ -144,6 +144,13 @@
 - **Several URL bars in one window (review round 3, minor 4):** every match of the first matching URL-bar id is read and judged (per-bar `lastUrl`); later ids in the table are
   fallbacks used only when earlier ids match nothing (review round 4), so a title field is never judged next to the real bar. No
   scenario covers it; whether Chrome's "Preview page" sheet carries its own `url_bar` node was not checked on a device.
+- **`url_bar_missing` counts only windows that show web content (1.0.4):** §7.2 says "a browser window without a URL
+  bar". Taken literally, that also covers the browser's own native screens (History, Settings, Bookmarks, Downloads),
+  menus, dialogs and the splash screen. On a Pixel 9a this blocked Brave as "unsupported" after 10 s on its History
+  screen, and again on every relaunch back into it, until the 60 s grace ran out. A bar-less window now counts only
+  when it contains a `android.webkit.WebView` node (how Chromium and the system WebView expose rendered pages), found
+  breadth first within 500 nodes. S17 covers both sides: a native screen stays allowed, and a bar-less web screen is
+  still blocked.
 - **WebAPK / TWA drawn by Chrome (adversarial 5):** a Chrome window without a URL bar is judged only through the 10 s
   `url_bar_missing` rule (now not reset on relaunch, 60 s grace). Detecting the WebAPK that owns Chrome's task (to block
   at once, or as the listed app) was not done: minting a WebAPK needs Play Services' WebAPK server, which the emulator
